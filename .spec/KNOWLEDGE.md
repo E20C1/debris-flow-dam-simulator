@@ -94,3 +94,13 @@
 - 独立再監査はcommit `c29bc0c`でP0なし、P1 1件、P2 1件と判定した。P1は`validate`要求へrun用summaryだけの`complete`を返すとWorker側試験なしで合格表示できるrequest/response対応欠落、P2はManning残差が最終偏差をstep数で割るだけだった点である。
 - requestごとの許可応答集合を固定し、`validate`のtests、`run`のsummary、`pause/resume/cancel`の同名acknowledgementをcallback前に必須化した。交差型4件をすべて拒否する自己試験を追加した。
 - Manning残差は最終偏差/step数を廃止し、最終stateへ追加SSP-RK2 stepを適用した正規化時間変化率へ変更した。`dt=1e-4`と`5e-5`の両方で評価し、刻み依存を直接検査する。
+
+## 2026-07-16 独立再々監査・完了判定
+
+- 独立監査タスク`019f6606-edf6-7fc0-8581-3697d75940a6`はcommit `ed1cad98e8aecf213f41347174f02fd0d3eefc45`をread-onlyで再々監査し、**P0なし・P1なし・P2なし、技術的にリリース可**と判定した。
+- 悪性request/response交差4件は4/4拒否、対応する正常4件は4/4受理し、検証がcallback前であることを静的・独立実行で確認した。
+- Manning時間残差の独立再計算は`dt=1e-4`で`1.5562285e-6/s`、`dt=5e-5`で`1.5547563e-6/s`、差`0.0946%`だった。
+- 最終回帰はChrome・Edge・FirefoxとChrome `file://`で57/57、fail 0、console error/warning 0。Worker数値試験32/32、標準1200秒24,001 step・243 frameも監査者が再現した。
+- pause/resume/cancelは3600秒ケースで300 step時に`一時停止 -> 計算再開 -> 停止しました`を確認した。
+- Playwright全sessionをcloseし、検証用HTTP serverの5 process chainを停止した。127.0.0.1:8765は非LISTENで、対象workspaceのAstro dev/Gradle/http-server/Playwright副作用は残っていない。
+- HTMLは279,089 byteで700KiB目標内。高度モードの実験・非互換表示、KANAko N/A、GSI/現地校正の限界はリリース条件として維持する。
