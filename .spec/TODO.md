@@ -5,33 +5,33 @@
 - [x] 実装計画、主要機能、CSV限定、段階統合をユーザーと確定する。
 - [x] 新規プロジェクト名、GitHub URL、`main`ブランチを確定する。
 - [x] AGENTS、MEMORY、HANDOFF、PLAN、SPEC、TODO、KNOWLEDGEの初期内容を作成する。
-- [ ] Git初期化、初回commit、`origin/main` pushを完了する。
-- [ ] 独立監査タスクの初回検証マトリクスを受領し、KNOWLEDGEへ反映する。
+- [x] Git初期化、初回commit、`origin/main` pushを完了する。
+- [x] 独立監査タスクの初回検証マトリクスを受領し、KNOWLEDGEとSPECへ反映する。
 
 ## 1. 単一HTML基盤
 
-- [ ] セマンティックなAppShell、3領域レイアウト、狭幅タブを実装する。
-- [ ] CSS tokensと再利用可能なフォーム・ボタン・パネル・警告・表を実装する。
-- [ ] AppStore、イベント配送、状態遷移、エラー境界を実装する。
-- [ ] Workerソースを単一HTML内へ埋め込み、versioned protocolを実装する。
-- [ ] Workerのpause/resume/cancelと古いrequest応答破棄を実装する。
-- [ ] Canvas 2Dの縦断図・ハイドログラフ・収支図を実装する。
-- [ ] 自己試験ランナーと検証結果パネルを実装する。
+- [x] セマンティックなAppShell、3領域レイアウト、狭幅タブを実装する。
+- [x] CSS tokensと再利用可能なフォーム・ボタン・パネル・警告・表を実装する。
+- [x] AppStore、イベント配送、状態遷移、エラー境界を実装する。
+- [x] Workerソースを単一HTML内へ埋め込み、versioned protocolを実装する。
+- [x] Workerのpause/resume/cancelと古いrequest応答破棄を実装する。
+- [x] Canvas 2Dの縦断図・ハイドログラフ・収支図を実装する。
+- [x] 自己試験ランナーと検証結果パネルを実装する。
 
 ## 2. 入力不信・CSV
 
-- [ ] RFC 4180 CSV parserを状態機械として実装する。
-- [ ] CSV serializer、UTF-8 BOM、CRLF、式注入対策を実装する。
-- [ ] schema/section/unit/ID/単調性/有限数/範囲/サイズ制限を検証する。
-- [ ] UIとは独立したnormalize/validate/freeze層を実装する。
-- [ ] Worker内の二重検証と推定メモリ・推定ステップ上限を実装する。
-- [ ] Worker応答のprotocol/request/type/配列/物理範囲を検証する。
-- [ ] ケースCSV round-tripと設定ハッシュ一致試験を実装する。
-- [ ] malformed/巨大/重複/未知単位/NaN/Infinity/CSV injectionを拒否する試験を実装する。
+- [x] RFC 4180 CSV parserを状態機械として実装する。
+- [x] CSV serializer、UTF-8 BOM、CRLF、式注入対策を実装する。
+- [x] schema/section/unit/ID/単調性/有限数/範囲/サイズ制限を検証する。
+- [x] UIとは独立したnormalize/validate/freeze層を実装する。
+- [x] Worker内の二重検証と推定メモリ・推定ステップ上限を実装する。
+- [x] Worker応答のprotocol/request/type/配列/物理範囲を検証する。
+- [x] ケースCSV round-tripと設定ハッシュ一致試験を実装する。
+- [x] malformed/巨大/重複/未知単位/NaN/Infinity/CSV injectionを拒否する試験を実装する。
 
 ## 3. 高精度1D
 
-- [ ] Float64Arrayベースの1D stateと境界条件を実装する。
+- [ ] `h,hu,hC_k`を保存し水体積を導出するFloat64Arrayベースの1D stateと境界条件を実装する。
 - [ ] hydrostatic reconstructionとwell-balanced sourceを実装する。
 - [ ] HLLC系流束、MUSCL、制限関数、SSP-RK2を実装する。
 - [ ] 正水深・濡れ乾き・CFL適応時間刻みを実装する。
@@ -61,7 +61,7 @@
 
 ## 6. 高度二相流・感度分析
 
-- [ ] 固相率、二速度、間隙水圧、ダイレイタンシーを持つ高度stateを実装する。
+- [ ] D-Claw型単一混合速度、固相率、間隙水圧、ダイレイタンシーを持つ五方程式高度stateを実装する。
 - [ ] 侵食取り込みと正値・上限制約を実装する。
 - [ ] 高度モードの実験表示、出典、適用限界を実装する。
 - [ ] Seed付きPRNGと再現試験を実装する。

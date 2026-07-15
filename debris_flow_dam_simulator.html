@@ -1,0 +1,2299 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="保存則と再現可能性を重視した土石流・砂防ダム統合シミュレーター">
+  <title>Debris Flow Dam Simulator</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #09100f;
+      --bg-raised: #101a18;
+      --panel: #14201e;
+      --panel-2: #192724;
+      --input: #0c1513;
+      --line: #2b3b37;
+      --line-strong: #41534f;
+      --text: #edf4f1;
+      --muted: #9eb0aa;
+      --faint: #6f827c;
+      --accent: #63d8b0;
+      --accent-2: #91ead0;
+      --focus: #f3c96b;
+      --danger: #ff817a;
+      --warning: #f3c96b;
+      --info: #7cc9ff;
+      --water: #62b9ff;
+      --bed: #cf9a66;
+      --fixed: #805f46;
+      --sediment: #efc06f;
+      --grid: rgba(205, 230, 220, .13);
+      --radius: 10px;
+      --radius-sm: 6px;
+      --shadow: 0 18px 50px rgba(0, 0, 0, .24);
+      --header-h: 62px;
+      --font: "Yu Gothic UI", "Hiragino Sans", Meiryo, system-ui, sans-serif;
+      --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { min-width: 320px; background: var(--bg); }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      overflow-x: hidden;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 78% -20%, rgba(99, 216, 176, .12), transparent 36rem),
+        linear-gradient(180deg, #0a1211, var(--bg));
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+    button, input, select, textarea { font: inherit; }
+    button, input, select { min-height: 38px; }
+    button, select, input, textarea {
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      background: var(--input);
+    }
+    input, select, textarea { width: 100%; padding: 7px 9px; }
+    input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+    button {
+      padding: 7px 12px;
+      cursor: pointer;
+      font-weight: 700;
+      transition: border-color .15s ease, background .15s ease, transform .15s ease;
+    }
+    button:hover:not(:disabled) { border-color: var(--accent); background: #172622; }
+    button:active:not(:disabled) { transform: translateY(1px); }
+    button:disabled { opacity: .48; cursor: not-allowed; }
+    button.primary { color: #07120f; background: var(--accent); border-color: var(--accent); }
+    button.primary:hover:not(:disabled) { background: var(--accent-2); }
+    button.danger { color: #240706; background: var(--danger); border-color: var(--danger); }
+    button.ghost { background: transparent; }
+    button.compact { min-height: 32px; padding: 4px 9px; font-size: 12px; }
+    a { color: var(--accent-2); }
+    code, .mono { font-family: var(--mono); }
+    .skip-link {
+      position: fixed; z-index: 100; top: 8px; left: 8px; padding: 8px 12px;
+      transform: translateY(-150%); background: var(--text); color: var(--bg);
+    }
+    .skip-link:focus { transform: none; }
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+    }
+    .app { min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
+    .app-header {
+      min-height: var(--header-h); display: flex; align-items: center; gap: 16px;
+      padding: 10px 16px; position: sticky; top: 0; z-index: 30;
+      border-bottom: 1px solid var(--line);
+      background: rgba(9, 16, 15, .92); backdrop-filter: blur(14px);
+    }
+    .brand { display: flex; align-items: center; gap: 11px; min-width: 250px; }
+    .brand-mark {
+      display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--accent);
+      border-radius: 50%; color: var(--accent); font-family: var(--mono); font-size: 11px;
+    }
+    .brand h1 { margin: 0; font-size: 16px; letter-spacing: .02em; }
+    .brand p { margin: 1px 0 0; color: var(--muted); font-size: 11px; }
+    .command-bar { margin-left: auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+    .run-state {
+      display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 5px 10px;
+      border: 1px solid var(--line); border-radius: 999px; color: var(--muted); white-space: nowrap;
+    }
+    .run-state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+    .run-state[data-state="running"]::before { background: var(--accent); box-shadow: 0 0 0 4px rgba(99,216,176,.12); }
+    .run-state[data-state="error"]::before { background: var(--danger); }
+    .run-state[data-state="paused"]::before { background: var(--warning); }
+    .workspace {
+      width: 100%; min-width: 0; display: grid;
+      grid-template-columns: minmax(248px, 290px) minmax(480px, 1fr) minmax(248px, 310px);
+      gap: 10px; padding: 10px;
+    }
+    .sidebar, .diagnostics, .workbench { min-width: 0; }
+    .sidebar, .diagnostics { display: flex; flex-direction: column; gap: 10px; }
+    .panel {
+      min-width: 0; border: 1px solid var(--line); border-radius: var(--radius);
+      background: linear-gradient(180deg, var(--panel), #111b19); box-shadow: var(--shadow);
+    }
+    .panel-header {
+      display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 8px 11px;
+      border-bottom: 1px solid var(--line);
+    }
+    .panel-header h2, .panel-header h3 { margin: 0; font-size: 13px; letter-spacing: .04em; }
+    .panel-header .meta { margin-left: auto; color: var(--muted); font-size: 11px; }
+    .panel-body { padding: 11px; }
+    .panel-body.flush { padding: 0; }
+    .stack { display: grid; gap: 9px; }
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+    .field { min-width: 0; }
+    .field.full { grid-column: 1 / -1; }
+    .field label, .field-label { display: block; margin: 0 0 4px; color: var(--muted); font-size: 11px; font-weight: 700; }
+    .field .unit { color: var(--faint); font-weight: 400; }
+    .help { margin: 5px 0 0; color: var(--faint); font-size: 11px; }
+    .notice { padding: 9px 10px; border-left: 3px solid var(--info); background: rgba(124,201,255,.08); color: #dcedf8; }
+    .notice.warning { border-color: var(--warning); background: rgba(243,201,107,.08); color: #f6e8c6; }
+    .notice.danger { border-color: var(--danger); background: rgba(255,129,122,.08); color: #ffd9d6; }
+    .summary-list { display: grid; gap: 6px; margin: 0; }
+    .summary-list > div { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+    .summary-list > div:last-child { border-bottom: 0; padding-bottom: 0; }
+    .summary-list dt { color: var(--muted); }
+    .summary-list dd { margin: 0; font-family: var(--mono); text-align: right; }
+    .mini-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .mini-table th, .mini-table td { padding: 6px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+    .mini-table th { color: var(--muted); font-weight: 700; }
+    .mini-table input, .mini-table select { min-height: 30px; padding: 4px 6px; }
+    .workbench { display: grid; grid-template-rows: auto minmax(390px, 1fr) minmax(180px, .46fr); gap: 10px; }
+    .view-tabs, .mobile-tabs { display: flex; gap: 4px; padding: 5px; overflow-x: auto; }
+    .view-tab, .mobile-tab { white-space: nowrap; background: transparent; border-color: transparent; color: var(--muted); }
+    .view-tab[aria-selected="true"], .mobile-tab[aria-selected="true"] { color: var(--text); border-color: var(--line-strong); background: var(--panel-2); }
+    .view-frame { min-height: 390px; position: relative; overflow: hidden; }
+    .view-pane { display: none; width: 100%; height: 100%; min-height: 390px; }
+    .view-pane.active { display: block; }
+    .canvas-wrap { position: relative; width: 100%; height: 100%; min-height: inherit; }
+    canvas { display: block; width: 100%; height: 100%; }
+    .canvas-legend {
+      position: absolute; top: 10px; right: 10px; display: grid; gap: 4px; padding: 8px 9px;
+      border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(9,16,15,.86);
+      color: var(--muted); font-size: 11px; pointer-events: none;
+    }
+    .legend-item { display: flex; align-items: center; gap: 7px; }
+    .legend-swatch { width: 17px; height: 3px; background: var(--text); }
+    .chart-grid { display: grid; grid-template-columns: 1.25fr .75fr; height: 100%; min-height: 180px; }
+    .chart-cell { position: relative; min-width: 0; min-height: 180px; border-right: 1px solid var(--line); }
+    .chart-cell:last-child { border-right: 0; }
+    .progress-track { height: 5px; overflow: hidden; background: var(--input); }
+    .progress-bar { width: 0; height: 100%; background: var(--accent); transition: width .1s linear; }
+    .metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
+    .metric { min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--input); }
+    .metric-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+    .metric-value { margin-top: 3px; overflow-wrap: anywhere; font: 700 15px/1.35 var(--mono); }
+    .metric-value.good { color: var(--accent-2); }
+    .metric-value.warn { color: var(--warning); }
+    .metric-value.bad { color: var(--danger); }
+    .status-log {
+      max-height: 220px; overflow: auto; margin: 0; padding: 9px 11px; list-style: none;
+      font-family: var(--mono); font-size: 10px;
+    }
+    .status-log li { padding: 5px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+    .status-log time { color: var(--faint); margin-right: 7px; }
+    .status-log [data-level="error"] { color: var(--danger); }
+    .status-log [data-level="warn"] { color: var(--warning); }
+    .status-log [data-level="ok"] { color: var(--accent-2); }
+    .validation-list { display: grid; gap: 7px; padding: 10px; }
+    .validation-item { display: grid; grid-template-columns: 12px 1fr auto; align-items: start; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+    .validation-dot { width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; background: var(--faint); }
+    .validation-item[data-status="pass"] .validation-dot { background: var(--accent); }
+    .validation-item[data-status="fail"] .validation-dot { background: var(--danger); }
+    .validation-item[data-status="warn"] .validation-dot { background: var(--warning); }
+    .validation-detail { color: var(--muted); font-size: 11px; }
+    .validation-value { font-family: var(--mono); font-size: 11px; }
+    .timeline { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; padding: 8px 11px; border-top: 1px solid var(--line); }
+    input[type="range"] { padding: 0; accent-color: var(--accent); }
+    .mobile-tabs { display: none; position: sticky; bottom: 0; z-index: 20; border-top: 1px solid var(--line); background: var(--bg-raised); }
+    .app-footer { padding: 10px 16px; border-top: 1px solid var(--line); color: var(--faint); font-size: 11px; }
+    .footer-row { display: flex; flex-wrap: wrap; gap: 10px 20px; justify-content: space-between; }
+    dialog { width: min(760px, calc(100% - 24px)); max-height: calc(100vh - 32px); padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius); color: var(--text); background: var(--panel); box-shadow: var(--shadow); }
+    dialog::backdrop { background: rgba(0,0,0,.72); }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
+    .dialog-scroll { max-height: 65vh; overflow: auto; padding: 12px; }
+    .hidden { display: none !important; }
+
+    @media (max-width: 1120px) {
+      .workspace { grid-template-columns: 260px minmax(0, 1fr); }
+      .diagnostics { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); }
+    }
+    @media (max-width: 760px) {
+      .app-header { position: static; align-items: flex-start; flex-wrap: wrap; }
+      .brand { min-width: 0; }
+      .command-bar { width: 100%; margin-left: 0; justify-content: flex-start; }
+      .command-bar .label-wide { display: none; }
+      .workspace { display: block; padding: 7px; }
+      .sidebar, .diagnostics, .workbench { display: none; }
+      .workspace[data-mobile-view="setup"] .sidebar,
+      .workspace[data-mobile-view="view"] .workbench,
+      .workspace[data-mobile-view="diagnostics"] .diagnostics { display: flex; }
+      .workspace[data-mobile-view="view"] .workbench { display: grid; }
+      .diagnostics { grid-template-columns: 1fr; }
+      .mobile-tabs { display: flex; }
+      .form-grid, .chart-grid { grid-template-columns: 1fr; }
+      .chart-cell { border-right: 0; border-bottom: 1px solid var(--line); }
+      .view-frame, .view-pane { min-height: 330px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .001ms !important; animation-duration: .001ms !important; }
+    }
+    @media print {
+      .command-bar, .sidebar, .mobile-tabs, .timeline { display: none !important; }
+      body { background: #fff; color: #000; }
+      .workspace { display: block; }
+      .panel { box-shadow: none; break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main-view">計算ビューへ移動</a>
+  <div class="app" id="app">
+    <header class="app-header">
+      <div class="brand" aria-label="アプリケーション名">
+        <div class="brand-mark" aria-hidden="true">DFD</div>
+        <div>
+          <h1>Debris Flow Dam Simulator</h1>
+          <p>保存則・多粒径・砂防ダム統合解析</p>
+        </div>
+      </div>
+      <div class="run-state" id="runState" data-state="idle" role="status" aria-live="polite">準備完了</div>
+      <nav class="command-bar" aria-label="ケース操作">
+        <button type="button" class="ghost" id="importButton">CSV読込</button>
+        <button type="button" class="ghost" id="exportButton">CSV保存</button>
+        <button type="button" class="ghost" id="validateButton"><span class="label-wide">自己</span>検証</button>
+        <button type="button" class="primary" id="runButton">計算開始</button>
+        <button type="button" class="ghost" id="pauseButton" disabled>一時停止</button>
+        <button type="button" class="danger" id="cancelButton" disabled>停止</button>
+      </nav>
+      <input class="sr-only" id="csvFileInput" type="file" accept=".csv,text/csv">
+    </header>
+
+    <div class="workspace" id="workspace" data-mobile-view="view">
+      <aside class="sidebar" id="setup-panel" aria-label="ケース設定">
+        <section class="panel">
+          <header class="panel-header"><h2>解析ケース</h2><span class="meta" id="caseHash">未検証</span></header>
+          <div class="panel-body stack">
+            <div class="field"><label for="caseName">ケース名</label><input id="caseName" maxlength="120" autocomplete="off"></div>
+            <div class="field">
+              <label for="modelMode">モデル</label>
+              <select id="modelMode">
+                <option value="standard1d">標準1D</option>
+                <option value="coupled1d2d">結合1D–2D</option>
+                <option value="advanced">高度二相流（実験）</option>
+              </select>
+            </div>
+            <div class="notice warning hidden" id="experimentalNotice"><strong>実験モデル:</strong> 妥当性検証が完了するまで防災判断に使用できません。</div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <header class="panel-header"><h2>計算条件</h2></header>
+          <div class="panel-body form-grid">
+            <div class="field"><label for="durationInput">計算時間 <span class="unit">s</span></label><input id="durationInput" type="number" min="0.01" max="86400" step="1"></div>
+            <div class="field"><label for="outputIntervalInput">出力間隔 <span class="unit">s</span></label><input id="outputIntervalInput" type="number" min="0.001" max="86400" step="0.1"></div>
+            <div class="field"><label for="cflInput">CFL</label><input id="cflInput" type="number" min="0.05" max="0.9" step="0.05"></div>
+            <div class="field"><label for="seedInput">乱数Seed</label><input id="seedInput" type="number" min="0" max="4294967295" step="1"></div>
+            <div class="field full"><p class="help" id="computeEstimate">検証後に計算量を表示します。</p></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <header class="panel-header"><h2>材料・河道</h2><span class="meta" id="geometryMeta"></span></header>
+          <div class="panel-body form-grid">
+            <div class="field"><label for="manningInput">Manning粗度</label><input id="manningInput" type="number" min="0" max="1" step="0.001"></div>
+            <div class="field"><label for="porosityInput">河床空隙率</label><input id="porosityInput" type="number" min="0.01" max="0.8" step="0.01"></div>
+            <div class="field"><label for="fluidDensityInput">液相密度 <span class="unit">kg/m³</span></label><input id="fluidDensityInput" type="number" min="500" max="3000" step="1"></div>
+            <div class="field"><label for="solidDensityInput">固相密度 <span class="unit">kg/m³</span></label><input id="solidDensityInput" type="number" min="1000" max="6000" step="1"></div>
+          </div>
+          <div class="panel-body flush"><table class="mini-table"><thead><tr><th>粒径</th><th>直径 m</th><th>割合</th></tr></thead><tbody id="grainTableBody"></tbody></table></div>
+        </section>
+
+        <section class="panel">
+          <header class="panel-header"><h2>砂防ダム</h2><button type="button" class="compact ghost" id="addDamButton">追加</button></header>
+          <div class="panel-body flush"><table class="mini-table"><thead><tr><th>種類</th><th>位置 m</th><th>高さ m</th><th></th></tr></thead><tbody id="damTableBody"></tbody></table></div>
+        </section>
+      </aside>
+
+      <main class="workbench" id="main-view" tabindex="-1">
+        <section class="panel">
+          <nav class="view-tabs" aria-label="可視化切替" role="tablist">
+            <button type="button" class="view-tab" role="tab" aria-selected="true" data-view="profile">縦断</button>
+            <button type="button" class="view-tab" role="tab" aria-selected="false" data-view="terrain">2D地形</button>
+            <button type="button" class="view-tab" role="tab" aria-selected="false" data-view="validation">検証</button>
+          </nav>
+          <div class="progress-track" aria-hidden="true"><div class="progress-bar" id="progressBar"></div></div>
+        </section>
+
+        <section class="panel view-frame" aria-label="解析ビュー">
+          <div class="view-pane active" id="profilePane" data-view-pane="profile">
+            <div class="canvas-wrap">
+              <canvas id="profileCanvas" aria-label="河道縦断、水面、河床、砂防ダム"></canvas>
+              <div class="canvas-legend" aria-hidden="true">
+                <div class="legend-item"><span class="legend-swatch" style="background:var(--water)"></span>水面</div>
+                <div class="legend-item"><span class="legend-swatch" style="background:var(--bed)"></span>移動床</div>
+                <div class="legend-item"><span class="legend-swatch" style="background:var(--fixed)"></span>固定床</div>
+              </div>
+            </div>
+          </div>
+          <div class="view-pane" id="terrainPane" data-view-pane="terrain">
+            <div class="canvas-wrap"><canvas id="terrainCanvas" aria-label="2D地形と流動深"></canvas></div>
+          </div>
+          <div class="view-pane" id="validationPane" data-view-pane="validation">
+            <div class="validation-list" id="validationList" aria-live="polite"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="chart-grid">
+            <div class="chart-cell"><canvas id="hydrographCanvas" aria-label="流入・観測点ハイドログラフ"></canvas></div>
+            <div class="chart-cell"><canvas id="massCanvas" aria-label="水・土砂収支誤差"></canvas></div>
+          </div>
+          <div class="timeline">
+            <output class="mono" id="timelineCurrent" for="timelineRange">0.00 s</output>
+            <input id="timelineRange" type="range" min="0" max="0" value="0" step="1" aria-label="表示時刻">
+            <output class="mono" id="timelineEnd" for="timelineRange">0.00 s</output>
+          </div>
+        </section>
+      </main>
+
+      <aside class="diagnostics" id="diagnostics-panel" aria-label="診断情報">
+        <section class="panel">
+          <header class="panel-header"><h2>収支・安定性</h2></header>
+          <div class="panel-body metric-grid">
+            <div class="metric"><div class="metric-label">時刻</div><div class="metric-value" id="metricTime">0.00 s</div></div>
+            <div class="metric"><div class="metric-label">step</div><div class="metric-value" id="metricSteps">0</div></div>
+            <div class="metric"><div class="metric-label">水量誤差</div><div class="metric-value" id="metricWaterError">—</div></div>
+            <div class="metric"><div class="metric-label">土砂誤差</div><div class="metric-value" id="metricSedimentError">—</div></div>
+            <div class="metric"><div class="metric-label">最小水深</div><div class="metric-value" id="metricMinDepth">—</div></div>
+            <div class="metric"><div class="metric-label">最大CFL</div><div class="metric-value" id="metricCfl">—</div></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <header class="panel-header"><h2>ケース診断</h2><span class="meta" id="diagnosticCount">0件</span></header>
+          <div class="panel-body"><div class="notice" id="diagnosticSummary">入力を検証すると診断結果が表示されます。</div></div>
+          <ul class="status-log" id="statusLog" aria-live="polite"></ul>
+        </section>
+
+        <section class="panel">
+          <header class="panel-header"><h2>再現性</h2></header>
+          <div class="panel-body">
+            <dl class="summary-list">
+              <div><dt>schema</dt><dd>1</dd></div>
+              <div><dt>protocol</dt><dd>1</dd></div>
+              <div><dt>case hash</dt><dd id="reproHash">—</dd></div>
+              <div><dt>frames</dt><dd id="reproFrames">0</dd></div>
+              <div><dt>Worker</dt><dd id="workerState">未生成</dd></div>
+            </dl>
+          </div>
+        </section>
+      </aside>
+    </div>
+
+    <nav class="mobile-tabs" aria-label="モバイル領域切替">
+      <button type="button" class="mobile-tab" data-mobile-view="setup" aria-selected="false">設定</button>
+      <button type="button" class="mobile-tab" data-mobile-view="view" aria-selected="true">解析</button>
+      <button type="button" class="mobile-tab" data-mobile-view="diagnostics" aria-selected="false">診断</button>
+    </nav>
+
+    <footer class="app-footer">
+      <div class="footer-row">
+        <span>研究・技術検討用。実測校正と第三者検証なしで防災判断に使用しないでください。</span>
+        <span>外部必須依存なし / 可搬I/OはCSVのみ</span>
+      </div>
+      <div class="footer-row hidden" id="gsiAttribution"><span>地形出典: 国土地理院ウェブサイトの標高タイルを加工して作成</span><a href="https://maps.gsi.go.jp/development/demtile.html" target="_blank" rel="noopener noreferrer">標高タイル仕様</a></div>
+    </footer>
+  </div>
+
+  <dialog id="importDialog" aria-labelledby="importDialogTitle">
+    <header class="panel-header"><h2 id="importDialogTitle">CSV読込プレビュー</h2><span class="meta" id="importFileMeta"></span></header>
+    <div class="dialog-scroll">
+      <div class="notice" id="importSummary">ファイルを検証中です。</div>
+      <div class="validation-list" id="importDiagnostics"></div>
+    </div>
+    <div class="dialog-actions"><button type="button" class="ghost" id="importCancelButton">キャンセル</button><button type="button" class="primary" id="importApplyButton" disabled>検証済みケースを適用</button></div>
+  </dialog>
+
+  <script id="solver-worker-source" type="text/plain">
+"use strict";
+
+const PROTOCOL_VERSION = 1;
+const LIMITS = Object.freeze({
+  maxCells1D: 10000,
+  maxCells2D: 262144,
+  maxGrains: 8,
+  minGrains: 2,
+  maxFrames: 2000,
+  maxSteps: 20000000,
+  maxEnsemble: 512,
+  maxAppBytes: 384 * 1024 * 1024,
+  maxDuration: 86400,
+});
+const G = 9.80665;
+const contexts = new Map();
+
+function post(type, requestId, payload, transfer) {
+  const message = Object.assign({ protocolVersion: PROTOCOL_VERSION, type, requestId }, payload || {});
+  self.postMessage(message, transfer || []);
+}
+
+function finite(value, name) {
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(name + "は有限数である必要があります");
+  return value;
+}
+
+function integer(value, name, min, max) {
+  finite(value, name);
+  if (!Number.isInteger(value) || value < min || value > max) throw new Error(name + "が範囲外です");
+  return value;
+}
+
+function range(value, name, min, max, inclusiveMin = true, inclusiveMax = true) {
+  finite(value, name);
+  if ((inclusiveMin ? value < min : value <= min) || (inclusiveMax ? value > max : value >= max)) {
+    throw new Error(name + "が範囲外です");
+  }
+  return value;
+}
+
+function estimateCaseBytes(c) {
+  const n = c.cells1d.length;
+  const k = c.grains.length;
+  const gridCount = c.grid2d && c.grid2d.enabled ? c.grid2d.nx * c.grid2d.ny : 0;
+  const oneDWorking = n * (32 + 14 * k) * 8;
+  const twoDWorking = gridCount * (42 + 12 * k) * 8;
+  const frames = Math.min(LIMITS.maxFrames, Math.ceil(c.solver.duration / c.solver.outputInterval) + 1);
+  const history = frames * Math.min(n, 1200) * 6 * 8;
+  const renderAndTransfer = Math.max(n * 8 * 8, gridCount * 5 * 8) * 2;
+  return Math.ceil((oneDWorking + twoDWorking + history + renderAndTransfer + 8 * 1024 * 1024) * 1.18);
+}
+
+function validateCase(c) {
+  if (!c || typeof c !== "object" || Array.isArray(c)) throw new Error("caseがobjectではありません");
+  integer(c.schemaVersion, "schemaVersion", 1, 1);
+  if (!c.meta || typeof c.meta.name !== "string" || c.meta.name.length < 1 || c.meta.name.length > 120) throw new Error("ケース名が不正です");
+  if (!c.solver || !["standard1d", "coupled1d2d", "advanced"].includes(c.solver.model)) throw new Error("solver.modelが不正です");
+  range(c.solver.duration, "duration", 0, LIMITS.maxDuration, false, true);
+  range(c.solver.outputInterval, "outputInterval", 0, c.solver.duration, false, true);
+  range(c.solver.cfl, "CFL", 0.05, 0.9);
+  integer(c.solver.maxSteps, "maxSteps", 1, LIMITS.maxSteps);
+  integer(c.solver.seed, "seed", 0, 0xffffffff);
+  range(c.solver.dryDepth, "dryDepth", 1e-12, 0.1);
+  if (!c.material) throw new Error("materialがありません");
+  range(c.material.fluidDensity, "fluidDensity", 500, 3000);
+  range(c.material.solidDensity, "solidDensity", c.material.fluidDensity + 1, 6000);
+  range(c.material.porosity, "porosity", 0.01, 0.8, false, false);
+  range(c.material.manning, "manning", 0, 1);
+  range(c.material.maxConcentration, "maxConcentration", 0.05, 0.85, false, false);
+  range(c.material.internalFrictionDeg, "internalFrictionDeg", 1, 89);
+  range(c.material.erosionCoefficient, "erosionCoefficient", 0, 1);
+  range(c.material.depositionCoefficient, "depositionCoefficient", 0, 10);
+  if (!Array.isArray(c.grains)) throw new Error("grainsが配列ではありません");
+  integer(c.grains.length, "粒径数", LIMITS.minGrains, LIMITS.maxGrains);
+  const grainIds = new Set();
+  let fractionSum = 0;
+  for (const grain of c.grains) {
+    if (!grain || typeof grain.id !== "string" || !/^[A-Za-z0-9_-]{1,32}$/.test(grain.id) || grainIds.has(grain.id)) throw new Error("粒径IDが不正または重複しています");
+    grainIds.add(grain.id);
+    range(grain.diameter, "粒径", 1e-6, 10, false, true);
+    range(grain.fraction, "粒径割合", 0, 1);
+    range(grain.settlingVelocity, "沈降速度", 0, 100);
+    fractionSum += grain.fraction;
+  }
+  if (Math.abs(fractionSum - 1) > 1e-12) throw new Error("粒径割合の合計が1ではありません");
+  if (!Array.isArray(c.cells1d)) throw new Error("cells1dが配列ではありません");
+  integer(c.cells1d.length, "1Dセル数", 3, LIMITS.maxCells1D);
+  let previousX = -Infinity;
+  const cellIds = new Set();
+  for (const cell of c.cells1d) {
+    if (!cell || typeof cell.id !== "string" || cellIds.has(cell.id)) throw new Error("1DセルIDが不正または重複しています");
+    cellIds.add(cell.id);
+    finite(cell.x, "cell.x");
+    if (cell.x <= previousX) throw new Error("1Dセル座標が単調増加ではありません");
+    previousX = cell.x;
+    finite(cell.fixedBed, "fixedBed");
+    finite(cell.bed, "bed");
+    if (cell.bed < cell.fixedBed) throw new Error("移動床が固定床を下回っています");
+    range(cell.width, "width", 0, 100000, false, true);
+    range(cell.initialDepth, "initialDepth", 0, 10000);
+  }
+  if (!Array.isArray(c.inflow) || c.inflow.length < 2) throw new Error("inflowは2点以上必要です");
+  let previousTime = -Infinity;
+  for (const point of c.inflow) {
+    range(point.time, "inflow.time", 0, c.solver.duration);
+    if (point.time <= previousTime) throw new Error("流入時刻が単調増加ではありません");
+    previousTime = point.time;
+    range(point.discharge, "inflow.discharge", 0, 1e9);
+    if (!Array.isArray(point.concentrations) || point.concentrations.length !== c.grains.length) throw new Error("流入濃度の粒径数が一致しません");
+    let sum = 0;
+    for (const concentration of point.concentrations) { range(concentration, "流入濃度", 0, c.material.maxConcentration); sum += concentration; }
+    if (sum > c.material.maxConcentration + 1e-12) throw new Error("流入濃度合計が上限を超えています");
+  }
+  if (!Array.isArray(c.structures)) throw new Error("structuresが配列ではありません");
+  const structureIds = new Set();
+  for (const structure of c.structures) {
+    if (!structure || typeof structure.id !== "string" || structureIds.has(structure.id)) throw new Error("構造物IDが不正または重複しています");
+    structureIds.add(structure.id);
+    if (!["impermeable", "slit", "grid"].includes(structure.type)) throw new Error("構造物種類が不正です");
+    range(structure.x, "structure.x", c.cells1d[0].x, c.cells1d[c.cells1d.length - 1].x);
+    range(structure.height, "structure.height", 0, 1000);
+    range(structure.dischargeCoefficient, "dischargeCoefficient", 0, 5);
+    range(structure.slotWidth, "slotWidth", 0, 100000);
+    range(structure.barSpacing, "barSpacing", 0, 1000);
+    range(structure.blockageProbability, "blockageProbability", 0, 1);
+    range(structure.remobilizationShear, "remobilizationShear", 0, 1e9);
+  }
+  if (!Array.isArray(c.observers)) throw new Error("observersが配列ではありません");
+  for (const observer of c.observers) range(observer.x, "observer.x", c.cells1d[0].x, c.cells1d[c.cells1d.length - 1].x);
+  if (c.grid2d && c.grid2d.enabled) {
+    integer(c.grid2d.nx, "grid2d.nx", 2, 4096);
+    integer(c.grid2d.ny, "grid2d.ny", 2, 4096);
+    if (c.grid2d.nx * c.grid2d.ny > LIMITS.maxCells2D) throw new Error("2Dセル数が上限を超えています");
+    range(c.grid2d.dx, "grid2d.dx", 0, 1e7, false, true);
+    range(c.grid2d.dy, "grid2d.dy", 0, 1e7, false, true);
+    if (!Array.isArray(c.grid2d.elevation) || c.grid2d.elevation.length !== c.grid2d.nx * c.grid2d.ny) throw new Error("2D標高配列長が不正です");
+    for (const elevation of c.grid2d.elevation) finite(elevation, "2D標高");
+  }
+  const estimatedBytes = estimateCaseBytes(c);
+  if (estimatedBytes > LIMITS.maxAppBytes) throw new Error("推定ピークメモリが384MiBを超えます");
+  const minimumDx = Math.min(...c.cells1d.slice(1).map((cell, index) => cell.x - c.cells1d[index].x));
+  const maximumDepth = Math.max(1, ...c.cells1d.map((cell) => cell.initialDepth + Math.max(0, cell.bed - cell.fixedBed)), ...c.structures.map((item) => item.height));
+  const minimumWidth = Math.min(...c.cells1d.map((cell) => cell.width));
+  const maximumDischarge = Math.max(...c.inflow.map((point) => point.discharge));
+  let maximumSlope = 1e-8;
+  for (let i = 1; i < c.cells1d.length; i++) maximumSlope = Math.max(maximumSlope, Math.abs((c.cells1d[i].bed - c.cells1d[i - 1].bed) / (c.cells1d[i].x - c.cells1d[i - 1].x)));
+  const unitDischarge = maximumDischarge / minimumWidth;
+  const normalDepth = unitDischarge > 0 ? Math.pow(c.material.manning * unitDischarge / Math.sqrt(maximumSlope), 3 / 5) : c.solver.dryDepth;
+  const conservativeSpeed = unitDischarge / Math.max(normalDepth, c.solver.dryDepth) + Math.sqrt(G * Math.max(maximumDepth, normalDepth));
+  const derivedMinimumDt = Math.max(1e-9, Math.min(c.solver.maxDt, 0.25 * c.solver.cfl * minimumDx / Math.max(conservativeSpeed, 1e-9)));
+  const estimatedSteps = Math.ceil(c.solver.duration / Math.min(c.solver.estimatedMinDt, derivedMinimumDt));
+  if (estimatedSteps > c.solver.maxSteps || estimatedSteps > LIMITS.maxSteps) throw new Error("推定step数が上限を超えます");
+  return { estimatedBytes, estimatedSteps };
+}
+
+function minmod(a, b) {
+  if (a * b <= 0) return 0;
+  return Math.abs(a) < Math.abs(b) ? a : b;
+}
+
+function hllcFlux(hL, uL, hR, uR, gravity, dryDepth) {
+  hL = hL > dryDepth ? hL : 0;
+  hR = hR > dryDepth ? hR : 0;
+  if (hL === 0 && hR === 0) return [0, 0];
+  const qL = hL * uL;
+  const qR = hR * uR;
+  const fL0 = qL;
+  const fL1 = qL * uL + 0.5 * gravity * hL * hL;
+  const fR0 = qR;
+  const fR1 = qR * uR + 0.5 * gravity * hR * hR;
+  const cL = Math.sqrt(gravity * hL);
+  const cR = Math.sqrt(gravity * hR);
+  const sL = Math.min(uL - cL, uR - cR);
+  const sR = Math.max(uL + cL, uR + cR);
+  if (sL >= 0) return [fL0, fL1];
+  if (sR <= 0) return [fR0, fR1];
+  if (hL === 0 || hR === 0) return [
+    (sR * fL0 - sL * fR0 + sL * sR * (hR - hL)) / (sR - sL),
+    (sR * fL1 - sL * fR1 + sL * sR * (qR - qL)) / (sR - sL),
+  ];
+  const denomStar = hR * (uR - sR) - hL * (uL - sL);
+  if (Math.abs(denomStar) < 1e-14 || Math.abs(sR - sL) < 1e-14) {
+    return [
+      (sR * fL0 - sL * fR0 + sL * sR * (hR - hL)) / (sR - sL),
+      (sR * fL1 - sL * fR1 + sL * sR * (qR - qL)) / (sR - sL),
+    ];
+  }
+  const sStar = (sR * hR * (uR - sR) - sL * hL * (uL - sL)) / denomStar;
+  if (!Number.isFinite(sStar)) throw new Error("HLLC中間波速が非有限です");
+  if (sStar >= 0) {
+    const hStar = hL * (sL - uL) / (sL - sStar);
+    return [fL0 + sL * (hStar - hL), fL1 + sL * (hStar * sStar - qL)];
+  }
+  const hStar = hR * (sR - uR) / (sR - sStar);
+  return [fR0 + sR * (hStar - hR), fR1 + sR * (hStar * sStar - qR)];
+}
+
+function mulberry32(seed) {
+  let value = seed >>> 0;
+  return () => {
+    value = (value + 0x6d2b79f5) >>> 0;
+    let z = value;
+    z = Math.imul(z ^ (z >>> 15), z | 1);
+    z ^= z + Math.imul(z ^ (z >>> 7), z | 61);
+    return ((z ^ (z >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function interpolateInflow(points, time, grainCount) {
+  if (time <= points[0].time) return { discharge: points[0].discharge, concentrations: points[0].concentrations.slice() };
+  const last = points[points.length - 1];
+  if (time >= last.time) return { discharge: last.discharge, concentrations: last.concentrations.slice() };
+  let hi = 1;
+  while (hi < points.length && points[hi].time < time) hi++;
+  const a = points[hi - 1];
+  const b = points[hi];
+  const ratio = (time - a.time) / (b.time - a.time);
+  const concentrations = new Array(grainCount);
+  for (let k = 0; k < grainCount; k++) concentrations[k] = a.concentrations[k] + ratio * (b.concentrations[k] - a.concentrations[k]);
+  return { discharge: a.discharge + ratio * (b.discharge - a.discharge), concentrations };
+}
+
+function createState1D(c) {
+  const n = c.cells1d.length;
+  const kCount = c.grains.length;
+  const x = new Float64Array(n);
+  const dx = new Float64Array(n);
+  const width = new Float64Array(n);
+  const fixedBed = new Float64Array(n);
+  const bed = new Float64Array(n);
+  const h = new Float64Array(n);
+  const q = new Float64Array(n);
+  const hc = new Float64Array(n * kCount);
+  const bedFraction = new Float64Array(n * kCount);
+  for (let i = 0; i < n; i++) {
+    const cell = c.cells1d[i];
+    x[i] = cell.x;
+    width[i] = cell.width;
+    fixedBed[i] = cell.fixedBed;
+    bed[i] = cell.bed;
+    h[i] = cell.initialDepth;
+    q[i] = 0;
+    for (let k = 0; k < kCount; k++) bedFraction[i * kCount + k] = c.grains[k].fraction;
+  }
+  for (let i = 0; i < n; i++) {
+    const left = i === 0 ? x[0] - 0.5 * (x[1] - x[0]) : 0.5 * (x[i - 1] + x[i]);
+    const right = i === n - 1 ? x[n - 1] + 0.5 * (x[n - 1] - x[n - 2]) : 0.5 * (x[i] + x[i + 1]);
+    dx[i] = right - left;
+    if (!(dx[i] > 0)) throw new Error("1D control volume幅が不正です");
+  }
+  const structures = c.structures.map((structure) => {
+    let face = 1;
+    let best = Infinity;
+    for (let j = 1; j < n; j++) {
+      const faceX = 0.5 * (x[j - 1] + x[j]);
+      const distance = Math.abs(faceX - structure.x);
+      if (distance < best) { best = distance; face = j; }
+    }
+    return Object.assign({}, structure, { face, blockage: 0, captured: new Float64Array(kCount) });
+  });
+  return { n, kCount, x, dx, width, fixedBed, bed, h, q, hc, bedFraction, structures, time: 0, steps: 0 };
+}
+
+function cloneState(state) {
+  return {
+    n: state.n, kCount: state.kCount,
+    x: state.x, dx: state.dx, width: state.width, fixedBed: state.fixedBed,
+    bed: state.bed.slice(), h: state.h.slice(), q: state.q.slice(), hc: state.hc.slice(), bedFraction: state.bedFraction.slice(),
+    structures: state.structures.map((item) => Object.assign({}, item, { captured: item.captured.slice() })),
+    time: state.time, steps: state.steps,
+  };
+}
+
+function statePrimitives(state, dryDepth) {
+  const n = state.n;
+  const kCount = state.kCount;
+  const eta = new Float64Array(n);
+  const u = new Float64Array(n);
+  const concentrations = new Float64Array(n * kCount);
+  for (let i = 0; i < n; i++) {
+    const h = state.h[i];
+    eta[i] = h + state.bed[i];
+    u[i] = h > dryDepth ? state.q[i] / h : 0;
+    if (h > dryDepth) for (let k = 0; k < kCount; k++) concentrations[i * kCount + k] = state.hc[i * kCount + k] / h;
+  }
+  return { eta, u, concentrations };
+}
+
+function slopes(values) {
+  const result = new Float64Array(values.length);
+  for (let i = 1; i < values.length - 1; i++) result[i] = minmod(values[i] - values[i - 1], values[i + 1] - values[i]);
+  return result;
+}
+
+function structureAtFace(state, face) {
+  for (const structure of state.structures) if (structure.face === face) return structure;
+  return null;
+}
+
+function limitByStructure(flux, sedimentFlux, structure, left, right, c, dt, faceWidth, random) {
+  if (!structure) return { flux, sedimentFlux, capturedRates: new Float64Array(sedimentFlux.length) };
+  const sign = flux[0] >= 0 ? 1 : -1;
+  const upstream = sign > 0 ? left : right;
+  const downstream = sign > 0 ? right : left;
+  const crest = Math.max(left.bed, right.bed) + structure.height;
+  const head = Math.max(0, upstream.eta - Math.max(crest, downstream.eta));
+  const coefficient = structure.dischargeCoefficient;
+  let allowed = coefficient * Math.sqrt(2 * G) * Math.pow(head, 1.5);
+  let opening = 1;
+  if (structure.type === "slit") {
+    const channelWidth = Math.max(1e-9, 0.5 * (left.width + right.width));
+    opening = Math.min(1, structure.slotWidth / channelWidth);
+    allowed *= opening;
+  } else if (structure.type === "grid") {
+    const largest = c.grains[c.grains.length - 1].diameter;
+    const geometricOpen = Math.min(1, structure.barSpacing / Math.max(structure.barSpacing + largest, 1e-9));
+    if (random() < structure.blockageProbability * dt * Math.min(1, Math.abs(flux[0]))) structure.blockage = Math.min(0.98, structure.blockage + 0.02);
+    const shear = c.material.fluidDensity * G * upstream.h * Math.abs(upstream.u);
+    if (shear > structure.remobilizationShear) structure.blockage = Math.max(0, structure.blockage - 0.01 * dt);
+    opening = geometricOpen * (1 - structure.blockage);
+    allowed *= opening;
+  }
+  const magnitude = Math.min(Math.abs(flux[0]), allowed);
+  const ratio = Math.abs(flux[0]) > 1e-14 ? magnitude / Math.abs(flux[0]) : 0;
+  const resultFlux = [sign * magnitude, flux[1] * ratio];
+  const resultSediment = sedimentFlux.slice();
+  const capturedRates = new Float64Array(resultSediment.length);
+  for (let k = 0; k < resultSediment.length; k++) {
+    let pass = ratio;
+    if (structure.type === "grid") {
+      const sizePass = Math.min(1, structure.barSpacing / Math.max(c.grains[k].diameter, 1e-12));
+      pass *= sizePass * opening;
+    }
+    const before = resultSediment[k];
+    resultSediment[k] *= pass;
+    const capturedRate = Math.max(0, Math.abs(before) - Math.abs(resultSediment[k]));
+    capturedRates[k] = capturedRate;
+    structure.captured[k] += capturedRate * faceWidth * dt;
+  }
+  return { flux: resultFlux, sedimentFlux: resultSediment, capturedRates };
+}
+
+function eulerStage(input, c, dt, random) {
+  const state = cloneState(input);
+  const { n, kCount } = state;
+  const dry = c.solver.dryDepth;
+  const primitive = statePrimitives(input, dry);
+  const etaSlope = slopes(primitive.eta);
+  const uSlope = slopes(primitive.u);
+  const concentrationSlope = new Array(kCount);
+  for (let k = 0; k < kCount; k++) {
+    const values = new Float64Array(n);
+    for (let i = 0; i < n; i++) values[i] = primitive.concentrations[i * kCount + k];
+    concentrationSlope[k] = slopes(values);
+  }
+  const dh = new Float64Array(n);
+  const dq = new Float64Array(n);
+  const dhc = new Float64Array(n * kCount);
+  let waterIn = 0, waterOut = 0;
+  const solidIn = new Float64Array(kCount);
+  const solidOut = new Float64Array(kCount);
+  const inflow = interpolateInflow(c.inflow, input.time, kCount);
+
+  for (let face = 0; face <= n; face++) {
+    let left, right;
+    if (face === 0) {
+      const slope = Math.max(1e-8, Math.abs((input.bed[1] - input.bed[0]) / (input.x[1] - input.x[0])));
+      const width = input.width[0];
+      const qPerWidth = inflow.discharge / width;
+      const normalDepth = qPerWidth > 0 ? Math.pow(c.material.manning * qPerWidth / Math.sqrt(slope), 3 / 5) : input.h[0];
+      const h = Math.max(dry, normalDepth);
+      left = { h, u: qPerWidth / h, eta: h + input.bed[0], bed: input.bed[0], width, concentrations: inflow.concentrations };
+      right = cellFaceState(input, primitive, etaSlope, uSlope, concentrationSlope, 0, -1, dry, c.material.maxConcentration);
+    } else if (face === n) {
+      left = cellFaceState(input, primitive, etaSlope, uSlope, concentrationSlope, n - 1, 1, dry, c.material.maxConcentration);
+      if (c.boundaries.right === "closed") right = Object.assign({}, left, { u: -left.u, concentrations: left.concentrations.slice() });
+      else right = Object.assign({}, left, { concentrations: left.concentrations.slice() });
+    } else {
+      left = cellFaceState(input, primitive, etaSlope, uSlope, concentrationSlope, face - 1, 1, dry, c.material.maxConcentration);
+      right = cellFaceState(input, primitive, etaSlope, uSlope, concentrationSlope, face, -1, dry, c.material.maxConcentration);
+    }
+    const zStar = Math.max(left.bed, right.bed);
+    const hLeftOriginal = left.h;
+    const hRightOriginal = right.h;
+    left.h = Math.max(0, left.eta - zStar);
+    right.h = Math.max(0, right.eta - zStar);
+    const baseFlux = hllcFlux(left.h, left.u, right.h, right.u, G, dry);
+    const sedimentFlux = new Array(kCount);
+    const upConcentration = baseFlux[0] >= 0 ? left.concentrations : right.concentrations;
+    for (let k = 0; k < kCount; k++) sedimentFlux[k] = baseFlux[0] * upConcentration[k];
+    const faceWidth = face === 0 ? state.width[0] : face === n ? state.width[n - 1] : 0.5 * (state.width[face - 1] + state.width[face]);
+    const structure = structureAtFace(state, face);
+    const limited = limitByStructure(baseFlux, sedimentFlux, structure, left, right, c, dt, faceWidth, random);
+    const leftMomentumFlux = limited.flux[1] + 0.5 * G * (hLeftOriginal * hLeftOriginal - left.h * left.h);
+    const rightMomentumFlux = limited.flux[1] + 0.5 * G * (hRightOriginal * hRightOriginal - right.h * right.h);
+    if (face > 0) {
+      const i = face - 1;
+      const scale = faceWidth / (state.width[i] * state.dx[i]);
+      dh[i] -= limited.flux[0] * scale;
+      dq[i] -= leftMomentumFlux * scale;
+      for (let k = 0; k < kCount; k++) dhc[i * kCount + k] -= limited.sedimentFlux[k] * scale;
+    }
+    if (face < n) {
+      const i = face;
+      const scale = faceWidth / (state.width[i] * state.dx[i]);
+      dh[i] += limited.flux[0] * scale;
+      dq[i] += rightMomentumFlux * scale;
+      for (let k = 0; k < kCount; k++) dhc[i * kCount + k] += limited.sedimentFlux[k] * scale;
+    }
+    if (structure && face > 0 && face < n) {
+      const upstreamIndex = limited.flux[0] >= 0 ? face - 1 : face;
+      const captureScale = faceWidth / (state.width[upstreamIndex] * state.dx[upstreamIndex]);
+      let capturedMixtureRate = 0;
+      for (let k = 0; k < kCount; k++) {
+        dhc[upstreamIndex * kCount + k] -= limited.capturedRates[k] * captureScale;
+        capturedMixtureRate += limited.capturedRates[k];
+      }
+      dh[upstreamIndex] -= capturedMixtureRate * captureScale;
+      dq[upstreamIndex] -= capturedMixtureRate * primitive.u[upstreamIndex] * captureScale;
+    }
+    if (face === 0) {
+      const mixture = limited.flux[0] * faceWidth;
+      let solids = 0;
+      for (let k = 0; k < kCount; k++) { const rate = limited.sedimentFlux[k] * faceWidth; solidIn[k] += Math.max(0, rate) * dt; solids += rate; }
+      waterIn += Math.max(0, mixture - solids) * dt;
+    } else if (face === n) {
+      const mixture = limited.flux[0] * faceWidth;
+      let solids = 0;
+      for (let k = 0; k < kCount; k++) { const rate = limited.sedimentFlux[k] * faceWidth; solidOut[k] += Math.max(0, rate) * dt; solids += rate; }
+      waterOut += Math.max(0, mixture - solids) * dt;
+    }
+  }
+
+  for (let i = 0; i < n; i++) {
+    state.h[i] = input.h[i] + dt * dh[i];
+    state.q[i] = input.q[i] + dt * dq[i];
+    if (state.h[i] < -1e-10 || !Number.isFinite(state.h[i]) || !Number.isFinite(state.q[i])) throw new Error("水深または運動量が非物理値になりました");
+    if (state.h[i] < dry) { state.h[i] = 0; state.q[i] = 0; }
+    for (let k = 0; k < kCount; k++) {
+      const index = i * kCount + k;
+      state.hc[index] = input.hc[index] + dt * dhc[index];
+      if (state.hc[index] < -1e-10 || !Number.isFinite(state.hc[index])) throw new Error("移動土砂量が非物理値になりました");
+      if (state.hc[index] < 0) state.hc[index] = 0;
+    }
+    enforceConcentration(state, i, c.material.maxConcentration);
+    applyFrictionAndMorphodynamics(state, i, c, dt);
+  }
+  state.time = input.time + dt;
+  state.steps = input.steps + 1;
+  return { state, exchange: { waterIn, waterOut, solidIn, solidOut } };
+}
+
+function cellFaceState(state, primitive, etaSlope, uSlope, concentrationSlope, i, side, dry, maxConcentration) {
+  const factor = side > 0 ? 0.5 : -0.5;
+  const eta = primitive.eta[i] + factor * etaSlope[i];
+  const u = primitive.u[i] + factor * uSlope[i];
+  const bed = state.bed[i];
+  const h = Math.max(0, eta - bed);
+  const concentrations = new Array(state.kCount);
+  let sum = 0;
+  for (let k = 0; k < state.kCount; k++) {
+    const value = Math.max(0, primitive.concentrations[i * state.kCount + k] + factor * concentrationSlope[k][i]);
+    concentrations[k] = h > dry ? value : 0;
+    sum += concentrations[k];
+  }
+  if (sum > maxConcentration) for (let k = 0; k < state.kCount; k++) concentrations[k] *= maxConcentration / sum;
+  return { h, u, eta, bed, width: state.width[i], concentrations };
+}
+
+function enforceConcentration(state, i, maxConcentration) {
+  const offset = i * state.kCount;
+  let solids = 0;
+  for (let k = 0; k < state.kCount; k++) solids += state.hc[offset + k];
+  const allowed = state.h[i] * maxConcentration;
+  if (solids > allowed + Math.max(1e-12, Math.abs(allowed) * 1e-10)) throw new Error("移動固相濃度が物理上限を超えました");
+}
+
+function applyFrictionAndMorphodynamics(state, i, c, dt) {
+  const h = state.h[i];
+  if (h <= c.solver.dryDepth) return;
+  const u = state.q[i] / h;
+  const friction = dt * G * c.material.manning * c.material.manning * Math.abs(state.q[i]) / Math.max(Math.pow(h, 7 / 3), 1e-18);
+  state.q[i] /= 1 + friction;
+  let totalConcentration = 0;
+  const offset = i * state.kCount;
+  for (let k = 0; k < state.kCount; k++) totalConcentration += state.hc[offset + k] / h;
+  const left = Math.max(0, i - 1);
+  const right = Math.min(state.n - 1, i + 1);
+  const slope = Math.max(0, (state.bed[left] - state.bed[right]) / Math.max(state.x[right] - state.x[left], 1e-12));
+  const tanPhi = Math.tan(c.material.internalFrictionDeg * Math.PI / 180);
+  const densityRatio = (c.material.solidDensity - c.material.fluidDensity) / c.material.fluidDensity;
+  const equilibrium = slope < tanPhi ? Math.max(0, Math.min(c.material.maxConcentration, slope / Math.max(densityRatio * (tanPhi - slope), 1e-12))) : c.material.maxConcentration;
+  const speed = Math.abs(u);
+  let erosion = c.material.erosionCoefficient * Math.max(0, equilibrium - totalConcentration) * speed * dt;
+  let deposition = c.material.depositionCoefficient * Math.max(0, totalConcentration - equilibrium) * speed * dt;
+  if (speed < c.material.yieldDepositionVelocity) deposition += c.material.yieldDepositionCoefficient * Math.max(0, totalConcentration - equilibrium) * dt;
+  const availableBedSolid = Math.max(0, (state.bed[i] - state.fixedBed[i]) * (1 - c.material.porosity));
+  erosion = Math.min(erosion, availableBedSolid);
+  let movingSolid = 0;
+  for (let k = 0; k < state.kCount; k++) movingSolid += state.hc[offset + k];
+  deposition = Math.min(deposition, movingSolid + erosion);
+  const concentrationCapacity = Math.max(0, (c.material.maxConcentration * h - movingSolid) / Math.max(1 - c.material.maxConcentration, 1e-12));
+  erosion = Math.min(erosion, deposition + concentrationCapacity);
+  const netByGrain = new Float64Array(state.kCount);
+  for (let k = 0; k < state.kCount; k++) {
+    const erosionK = erosion * state.bedFraction[offset + k];
+    const movingFraction = movingSolid > 0 ? state.hc[offset + k] / movingSolid : 0;
+    const depositionK = deposition * movingFraction;
+    netByGrain[k] = erosionK - depositionK;
+    state.hc[offset + k] += netByGrain[k];
+  }
+  const netSolid = erosion - deposition;
+  const updatedBedSolid = availableBedSolid - netSolid;
+  if (updatedBedSolid > 1e-14) {
+    let fractionTotal = 0;
+    for (let k = 0; k < state.kCount; k++) {
+      const previousBedByGrain = availableBedSolid * state.bedFraction[offset + k];
+      const nextBedByGrain = previousBedByGrain - netByGrain[k];
+      if (nextBedByGrain < -1e-12) throw new Error("粒径別河床量が負になりました");
+      state.bedFraction[offset + k] = Math.max(0, nextBedByGrain) / updatedBedSolid;
+      fractionTotal += state.bedFraction[offset + k];
+    }
+    if (Math.abs(fractionTotal - 1) > 1e-10) throw new Error("河床粒径割合の保存に失敗しました");
+  }
+  state.h[i] += netSolid;
+  state.bed[i] -= netSolid / (1 - c.material.porosity);
+  if (state.bed[i] < state.fixedBed[i] - 1e-12) throw new Error("侵食が固定床を下回りました");
+  if (state.bed[i] < state.fixedBed[i]) state.bed[i] = state.fixedBed[i];
+  enforceConcentration(state, i, c.material.maxConcentration);
+}
+
+function averageStates(original, twice, c) {
+  const result = cloneState(original);
+  for (let i = 0; i < result.n; i++) {
+    result.h[i] = 0.5 * (original.h[i] + twice.h[i]);
+    result.q[i] = 0.5 * (original.q[i] + twice.q[i]);
+    result.bed[i] = 0.5 * (original.bed[i] + twice.bed[i]);
+    const originalBedSolid = Math.max(0, original.bed[i] - original.fixedBed[i]) * (1 - c.material.porosity);
+    const twiceBedSolid = Math.max(0, twice.bed[i] - twice.fixedBed[i]) * (1 - c.material.porosity);
+    const resultBedSolid = 0.5 * (originalBedSolid + twiceBedSolid);
+    for (let k = 0; k < result.kCount; k++) {
+      const index = i * result.kCount + k;
+      result.hc[index] = 0.5 * (original.hc[index] + twice.hc[index]);
+      const component = 0.5 * (originalBedSolid * original.bedFraction[index] + twiceBedSolid * twice.bedFraction[index]);
+      result.bedFraction[index] = resultBedSolid > 1e-14 ? component / resultBedSolid : original.bedFraction[index];
+    }
+    enforceConcentration(result, i, c.material.maxConcentration);
+  }
+  for (let s = 0; s < result.structures.length; s++) {
+    result.structures[s].blockage = 0.5 * (original.structures[s].blockage + twice.structures[s].blockage);
+    for (let k = 0; k < result.kCount; k++) result.structures[s].captured[k] = 0.5 * (original.structures[s].captured[k] + twice.structures[s].captured[k]);
+  }
+  result.time = original.time + (twice.time - original.time) * 0.5;
+  result.steps = original.steps + 1;
+  return result;
+}
+
+function combineExchange(a, b) {
+  const solidIn = new Float64Array(a.solidIn.length);
+  const solidOut = new Float64Array(a.solidOut.length);
+  for (let k = 0; k < solidIn.length; k++) { solidIn[k] = 0.5 * (a.solidIn[k] + b.solidIn[k]); solidOut[k] = 0.5 * (a.solidOut[k] + b.solidOut[k]); }
+  return { waterIn: 0.5 * (a.waterIn + b.waterIn), waterOut: 0.5 * (a.waterOut + b.waterOut), solidIn, solidOut };
+}
+
+function computeDt(state, c) {
+  let dt = Infinity;
+  let maxCflSpeed = 0;
+  for (let i = 0; i < state.n; i++) {
+    const h = state.h[i];
+    const u = h > c.solver.dryDepth ? Math.abs(state.q[i] / h) : 0;
+    const speed = u + Math.sqrt(G * Math.max(h, 0));
+    maxCflSpeed = Math.max(maxCflSpeed, speed);
+    if (speed > 1e-12) dt = Math.min(dt, c.solver.cfl * state.dx[i] / speed);
+  }
+  if (!Number.isFinite(dt)) dt = Math.min(0.1, c.solver.duration - state.time);
+  dt = Math.min(dt, c.solver.maxDt, c.solver.duration - state.time);
+  if (!(dt > 0) || !Number.isFinite(dt)) throw new Error("適応時間刻みが不正です");
+  let actualCfl = 0;
+  for (let i = 0; i < state.n; i++) {
+    const h = state.h[i];
+    const u = h > c.solver.dryDepth ? Math.abs(state.q[i] / h) : 0;
+    actualCfl = Math.max(actualCfl, (u + Math.sqrt(G * Math.max(h, 0))) * dt / state.dx[i]);
+  }
+  return { dt, maxCflSpeed, actualCfl };
+}
+
+function inventory(state, c) {
+  let water = 0;
+  const suspended = new Float64Array(state.kCount);
+  const bedSolid = new Float64Array(state.kCount);
+  const captured = new Float64Array(state.kCount);
+  let minDepth = Infinity;
+  let maxConcentration = 0;
+  for (let i = 0; i < state.n; i++) {
+    const volumeFactor = state.width[i] * state.dx[i];
+    let cellSolid = 0;
+    for (let k = 0; k < state.kCount; k++) {
+      const index = i * state.kCount + k;
+      const moving = state.hc[index];
+      suspended[k] += moving * volumeFactor;
+      cellSolid += moving;
+      bedSolid[k] += Math.max(0, state.bed[i] - state.fixedBed[i]) * (1 - c.material.porosity) * state.bedFraction[index] * volumeFactor;
+    }
+    water += Math.max(0, state.h[i] - cellSolid) * volumeFactor;
+    minDepth = Math.min(minDepth, state.h[i]);
+    maxConcentration = Math.max(maxConcentration, state.h[i] > c.solver.dryDepth ? cellSolid / state.h[i] : 0);
+  }
+  for (const structure of state.structures) for (let k = 0; k < state.kCount; k++) captured[k] += structure.captured[k];
+  return { water, suspended, bedSolid, captured, minDepth, maxConcentration };
+}
+
+function makeFrame(state, c, diagnostics) {
+  const n = state.n;
+  const x = state.x.slice();
+  const bed = state.bed.slice();
+  const fixedBed = state.fixedBed.slice();
+  const surface = new Float64Array(n);
+  const discharge = new Float64Array(n);
+  const concentration = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    surface[i] = state.bed[i] + state.h[i];
+    discharge[i] = state.q[i] * state.width[i];
+    let solid = 0;
+    for (let k = 0; k < state.kCount; k++) solid += state.hc[i * state.kCount + k];
+    concentration[i] = state.h[i] > c.solver.dryDepth ? solid / state.h[i] : 0;
+  }
+  return { x, bed, fixedBed, surface, discharge, concentration, diagnostics };
+}
+
+function transferFrame(requestId, frame) {
+  post("frame", requestId, {
+    time: frame.diagnostics.time,
+    steps: frame.diagnostics.steps,
+    diagnostics: frame.diagnostics,
+    lengths: { profile: frame.x.length },
+    buffers: {
+      x: frame.x.buffer,
+      bed: frame.bed.buffer,
+      fixedBed: frame.fixedBed.buffer,
+      surface: frame.surface.buffer,
+      discharge: frame.discharge.buffer,
+      concentration: frame.concentration.buffer,
+    },
+  }, [frame.x.buffer, frame.bed.buffer, frame.fixedBed.buffer, frame.surface.buffer, frame.discharge.buffer, frame.concentration.buffer]);
+}
+
+function diagnosticsFor(state, c, balance, initialInventory, maxCfl) {
+  const current = inventory(state, c);
+  const expectedWater = initialInventory.water + balance.waterIn - balance.waterOut;
+  const currentSolid = new Float64Array(state.kCount);
+  const expectedSolid = new Float64Array(state.kCount);
+  let solidNumerator = 0, solidDenominator = 0;
+  for (let k = 0; k < state.kCount; k++) {
+    currentSolid[k] = current.suspended[k] + current.bedSolid[k] + current.captured[k];
+    expectedSolid[k] = initialInventory.suspended[k] + initialInventory.bedSolid[k] + initialInventory.captured[k] + balance.solidIn[k] - balance.solidOut[k];
+    solidNumerator += Math.abs(currentSolid[k] - expectedSolid[k]);
+    solidDenominator += Math.abs(expectedSolid[k]);
+  }
+  const waterError = Math.abs(current.water - expectedWater) / Math.max(Math.abs(expectedWater), 1e-12);
+  const sedimentError = solidNumerator / Math.max(solidDenominator, 1e-12);
+  return {
+    time: state.time,
+    steps: state.steps,
+    waterError,
+    sedimentError,
+    minDepth: current.minDepth,
+    maxConcentration: current.maxConcentration,
+    maxCfl,
+    waterVolume: current.water,
+  };
+}
+
+async function runStandard1D(requestId, c, context) {
+  const state0 = createState1D(c);
+  let state = state0;
+  const initialInventory = inventory(state, c);
+  const balance = { waterIn: 0, waterOut: 0, solidIn: new Float64Array(state.kCount), solidOut: new Float64Array(state.kCount) };
+  const random = mulberry32(c.solver.seed);
+  let nextOutput = 0;
+  let frameCount = 0;
+  let lastProgress = 0;
+  let maxCfl = 0;
+  transferFrame(requestId, makeFrame(state, c, diagnosticsFor(state, c, balance, initialInventory, maxCfl)));
+  frameCount++;
+  while (state.time < c.solver.duration - 1e-12) {
+    if (context.cancelled) throw new Error("cancelled");
+    while (context.paused && !context.cancelled) await new Promise((resolve) => setTimeout(resolve, 30));
+    if (state.steps >= c.solver.maxSteps || state.steps >= LIMITS.maxSteps) throw new Error("step上限に達しました");
+    const stepInfo = computeDt(state, c);
+    maxCfl = Math.max(maxCfl, stepInfo.actualCfl);
+    const stage1 = eulerStage(state, c, stepInfo.dt, random);
+    const stage2 = eulerStage(stage1.state, c, stepInfo.dt, random);
+    state = averageStates(state, stage2.state, c);
+    const exchange = combineExchange(stage1.exchange, stage2.exchange);
+    balance.waterIn += exchange.waterIn;
+    balance.waterOut += exchange.waterOut;
+    for (let k = 0; k < state.kCount; k++) { balance.solidIn[k] += exchange.solidIn[k]; balance.solidOut[k] += exchange.solidOut[k]; }
+    if (state.time + 1e-9 >= nextOutput && frameCount < LIMITS.maxFrames) {
+      transferFrame(requestId, makeFrame(state, c, diagnosticsFor(state, c, balance, initialInventory, maxCfl)));
+      frameCount++;
+      nextOutput += c.solver.outputInterval;
+    }
+    const now = performance.now();
+    if (now - lastProgress >= 100) {
+      lastProgress = now;
+      post("progress", requestId, { progress: Math.min(1, state.time / c.solver.duration), time: state.time, steps: state.steps });
+    }
+    if ((state.steps & 31) === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  const finalDiagnostics = diagnosticsFor(state, c, balance, initialInventory, maxCfl);
+  if (frameCount === 0 || Math.abs(state.time - nextOutput) > 1e-9) transferFrame(requestId, makeFrame(state, c, finalDiagnostics));
+  post("complete", requestId, { summary: Object.assign({ frameCount }, finalDiagnostics) });
+}
+
+function makeTestResult(id, title, status, value, threshold, detail) {
+  return { id, title, status, value, threshold, detail };
+}
+
+function runSelfTests() {
+  const results = [];
+  try {
+    const flux = hllcFlux(1, 0, 1, 0, G, 1e-8);
+    results.push(makeTestResult("hllc-rest", "HLLC静止流束", Math.abs(flux[0]) <= 1e-14 ? "pass" : "fail", Math.abs(flux[0]), "<=1e-14", "等水深・速度0で質量流束が0"));
+  } catch (error) { results.push(makeTestResult("hllc-rest", "HLLC静止流束", "fail", "例外", "<=1e-14", error.message)); }
+  try {
+    const flux = hllcFlux(1, 0, 0, 0, G, 1e-8);
+    const ok = flux.every(Number.isFinite) && flux[0] > 0;
+    results.push(makeTestResult("hllc-dry", "HLLC乾床境界", ok ? "pass" : "fail", flux[0], "有限かつ正", "片側乾床で有限流束"));
+  } catch (error) { results.push(makeTestResult("hllc-dry", "HLLC乾床境界", "fail", "例外", "有限", error.message)); }
+  try {
+    const a = mulberry32(12345), b = mulberry32(12345);
+    let identical = true;
+    for (let i = 0; i < 1000; i++) if (a() !== b()) { identical = false; break; }
+    results.push(makeTestResult("prng", "Seed再現性", identical ? "pass" : "fail", identical ? "一致" : "不一致", "完全一致", "同一Seedで1000値を比較"));
+  } catch (error) { results.push(makeTestResult("prng", "Seed再現性", "fail", "例外", "完全一致", error.message)); }
+  try {
+    let rejected = false;
+    try { integer(LIMITS.maxCells1D + 1, "cells", 3, LIMITS.maxCells1D); } catch (_) { rejected = true; }
+    results.push(makeTestResult("limit", "上限+1拒否", rejected ? "pass" : "fail", rejected ? "拒否" : "受理", "拒否", "1Dセル上限+1"));
+  } catch (error) { results.push(makeTestResult("limit", "上限+1拒否", "fail", "例外", "拒否", error.message)); }
+  return results;
+}
+
+self.onmessage = (event) => {
+  const message = event.data;
+  if (!message || typeof message !== "object" || message.protocolVersion !== PROTOCOL_VERSION || typeof message.requestId !== "string") return;
+  const requestId = message.requestId;
+  try {
+    if (message.type === "init") {
+      post("ready", requestId, { limits: LIMITS });
+      return;
+    }
+    if (message.type === "pause") { const context = contexts.get(message.targetRequestId); if (context) context.paused = true; post("progress", requestId, { acknowledged: "pause" }); return; }
+    if (message.type === "resume") { const context = contexts.get(message.targetRequestId); if (context) context.paused = false; post("progress", requestId, { acknowledged: "resume" }); return; }
+    if (message.type === "cancel") { const context = contexts.get(message.targetRequestId); if (context) context.cancelled = true; post("progress", requestId, { acknowledged: "cancel" }); return; }
+    if (message.type === "validate") { post("complete", requestId, { tests: runSelfTests() }); return; }
+    if (message.type === "run") {
+      const estimates = validateCase(message.caseData);
+      if (message.caseData.solver.model !== "standard1d") throw new Error("この段階では標準1D以外の数値カーネルは未実装です");
+      const context = { cancelled: false, paused: false };
+      contexts.set(requestId, context);
+      post("progress", requestId, { progress: 0, estimates });
+      runStandard1D(requestId, message.caseData, context)
+        .catch((error) => post("error", requestId, { code: error.message === "cancelled" ? "CANCELLED" : "RUN_FAILED", message: error.message || String(error) }))
+        .finally(() => contexts.delete(requestId));
+      return;
+    }
+    throw new Error("未知のWorker message typeです");
+  } catch (error) {
+    post("error", requestId, { code: "INVALID_REQUEST", message: error.message || String(error) });
+  }
+};
+  </script>
+  <script>
+"use strict";
+
+window.DFDS = (() => {
+  const PROTOCOL_VERSION = 1;
+  const SCHEMA_VERSION = 1;
+  const GRAVITY = 9.80665;
+  const LIMITS = Object.freeze({
+    maxCsvBytes: 10 * 1024 * 1024,
+    maxCsvRows: 250000,
+    maxFieldLength: 32768,
+    maxCells1D: 10000,
+    maxCells2D: 262144,
+    minGrains: 2,
+    maxGrains: 8,
+    maxFrames: 2000,
+    maxSteps: 20000000,
+    maxTiles: 64,
+    maxEnsemble: 512,
+    maxWorkers: 4,
+    maxAppBytes: 384 * 1024 * 1024,
+  });
+  const CSV_HEADER = Object.freeze(["schema_version", "section", "id", "parent_id", "time_s", "x_m", "y_m", "z_m", "quantity", "value", "unit", "text"]);
+  const SECTIONS = new Set(["meta", "solver", "material", "grain", "cell_1d", "inflow", "structure", "observer", "grid_2d", "boundary", "uncertainty", "provenance"]);
+  const FORMULA_PREFIX = /^[=+\-@\t\r\n]/;
+  const textEncoder = new TextEncoder();
+
+  class ValidationError extends Error {
+    constructor(message, diagnostics) {
+      super(message);
+      this.name = "ValidationError";
+      this.diagnostics = diagnostics || [];
+    }
+  }
+
+  function clone(value) {
+    return typeof structuredClone === "function" ? structuredClone(value) : JSON.parse(JSON.stringify(value));
+  }
+
+  function deepFreeze(value, seen = new WeakSet()) {
+    if (!value || typeof value !== "object" || seen.has(value)) return value;
+    seen.add(value);
+    for (const key of Object.keys(value)) deepFreeze(value[key], seen);
+    return Object.freeze(value);
+  }
+
+  function assertFinite(value, name, min, max, integer = false) {
+    if (typeof value !== "number" || !Number.isFinite(value)) throw new ValidationError(name + "は有限数である必要があります");
+    if (integer && !Number.isInteger(value)) throw new ValidationError(name + "は整数である必要があります");
+    if (min !== undefined && value < min) throw new ValidationError(name + "が下限未満です");
+    if (max !== undefined && value > max) throw new ValidationError(name + "が上限を超えています");
+    return value;
+  }
+
+  function fnv1a(text) {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(16).padStart(8, "0");
+  }
+
+  function makeReferenceCase() {
+    const cells1d = [];
+    for (let i = 0; i <= 30; i++) {
+      const x = i * 10;
+      const fixedBed = 58 - 0.19 * x;
+      const deposit = Math.max(0, 1.2 * (1 - x / 300));
+      cells1d.push({ id: "c" + String(i).padStart(3, "0"), x, fixedBed, bed: fixedBed + deposit, width: 10, initialDepth: 0.02 });
+    }
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      meta: { name: "KANAko公開条件を参考にした1D検証ケース" },
+      solver: {
+        model: "standard1d",
+        duration: 1200,
+        outputInterval: 5,
+        cfl: 0.42,
+        seed: 144,
+        dryDepth: 1e-6,
+        maxDt: 0.05,
+        estimatedMinDt: 0.001,
+        maxSteps: LIMITS.maxSteps,
+      },
+      material: {
+        fluidDensity: 1100,
+        solidDensity: 2650,
+        porosity: 0.35,
+        manning: 0.03,
+        maxConcentration: 0.62,
+        internalFrictionDeg: 35,
+        erosionCoefficient: 0.0007,
+        depositionCoefficient: 0.05,
+        yieldDepositionVelocity: 0.18,
+        yieldDepositionCoefficient: 0.012,
+        activeLayerThickness: 0.5,
+      },
+      grains: [
+        { id: "fine", diameter: 0.1, fraction: 0.72, settlingVelocity: 0.45 },
+        { id: "coarse", diameter: 1.0, fraction: 0.28, settlingVelocity: 1.9 },
+      ],
+      cells1d,
+      inflow: [
+        { id: "q000", time: 0, discharge: 0, concentrations: [0, 0] },
+        { id: "q001", time: 120, discharge: 4, concentrations: [0.08, 0.03] },
+        { id: "q002", time: 600, discharge: 18, concentrations: [0.16, 0.08] },
+        { id: "q003", time: 900, discharge: 30, concentrations: [0.20, 0.11] },
+        { id: "q004", time: 1200, discharge: 0, concentrations: [0, 0] },
+      ],
+      structures: [
+        { id: "dam-grid", type: "grid", x: 100, height: 10, dischargeCoefficient: 0.58, slotWidth: 0, barSpacing: 0.55, blockageProbability: 0.0008, remobilizationShear: 1600 },
+        { id: "dam-solid", type: "impermeable", x: 200, height: 10, dischargeCoefficient: 0.58, slotWidth: 0, barSpacing: 0, blockageProbability: 0, remobilizationShear: 0 },
+      ],
+      observers: [70, 150, 230, 290].map((x, index) => ({ id: "obs" + (index + 1), name: (index + 1) + "番観測点", x })),
+      boundaries: { right: "open" },
+      grid2d: { enabled: false, nx: 2, ny: 2, dx: 10, dy: 10, originX: 0, originY: 0, elevation: [0, 0, 0, 0] },
+      uncertainty: { method: "none", cases: 1, seed: 144 },
+      provenance: [
+        { id: "reference", key: "basis", value: "KANAko 1.44公開資料とdefault条件を参考にクリーンルームで再構成" },
+      ],
+    };
+  }
+
+  function estimateCaseBytes(c) {
+    const n = c.cells1d.length;
+    const k = c.grains.length;
+    const gridCount = c.grid2d && c.grid2d.enabled ? c.grid2d.nx * c.grid2d.ny : 0;
+    const frames = Math.min(LIMITS.maxFrames, Math.ceil(c.solver.duration / c.solver.outputInterval) + 1);
+    const oneD = n * (32 + 14 * k) * 8;
+    const twoD = gridCount * (42 + 12 * k) * 8;
+    const history = frames * Math.min(n, 1200) * 6 * 8;
+    const transfer = Math.max(n * 8 * 8, gridCount * 5 * 8) * 2;
+    return Math.ceil((oneD + twoD + history + transfer + 8 * 1024 * 1024) * 1.18);
+  }
+
+  function estimateMinimumDt(c) {
+    const minimumDx = Math.min(...c.cells1d.slice(1).map((cell, index) => cell.x - c.cells1d[index].x));
+    const maximumDepth = Math.max(1, ...c.cells1d.map((cell) => cell.initialDepth + Math.max(0, cell.bed - cell.fixedBed)), ...c.structures.map((item) => item.height));
+    const minimumWidth = Math.min(...c.cells1d.map((cell) => cell.width));
+    const maximumDischarge = Math.max(...c.inflow.map((point) => point.discharge));
+    let maximumSlope = 1e-8;
+    for (let i = 1; i < c.cells1d.length; i++) maximumSlope = Math.max(maximumSlope, Math.abs((c.cells1d[i].bed - c.cells1d[i - 1].bed) / (c.cells1d[i].x - c.cells1d[i - 1].x)));
+    const unitDischarge = maximumDischarge / minimumWidth;
+    const normalDepth = unitDischarge > 0 ? Math.pow(c.material.manning * unitDischarge / Math.sqrt(maximumSlope), 3 / 5) : c.solver.dryDepth;
+    const conservativeSpeed = unitDischarge / Math.max(normalDepth, c.solver.dryDepth) + Math.sqrt(GRAVITY * Math.max(maximumDepth, normalDepth));
+    return Math.max(1e-9, Math.min(c.solver.maxDt, 0.25 * c.solver.cfl * minimumDx / Math.max(conservativeSpeed, 1e-9)));
+  }
+
+  function normalizeCase(source) {
+    const c = clone(source);
+    c.schemaVersion = Number(c.schemaVersion);
+    c.meta.name = String(c.meta.name || "").trim();
+    c.solver.model = String(c.solver.model);
+    for (const key of ["duration", "outputInterval", "cfl", "seed", "dryDepth", "maxDt", "estimatedMinDt", "maxSteps"]) c.solver[key] = Number(c.solver[key]);
+    for (const key of Object.keys(c.material)) c.material[key] = Number(c.material[key]);
+    c.grains = c.grains.map((grain) => ({ id: String(grain.id).trim(), diameter: Number(grain.diameter), fraction: Number(grain.fraction), settlingVelocity: Number(grain.settlingVelocity) }));
+    c.grains.sort((a, b) => a.diameter - b.diameter || a.id.localeCompare(b.id));
+    c.cells1d = c.cells1d.map((cell) => ({ id: String(cell.id).trim(), x: Number(cell.x), fixedBed: Number(cell.fixedBed), bed: Number(cell.bed), width: Number(cell.width), initialDepth: Number(cell.initialDepth) })).sort((a, b) => a.x - b.x);
+    c.inflow = c.inflow.map((point) => ({ id: String(point.id).trim(), time: Number(point.time), discharge: Number(point.discharge), concentrations: point.concentrations.map(Number) })).sort((a, b) => a.time - b.time);
+    c.structures = c.structures.map((item) => ({
+      id: String(item.id).trim(), type: String(item.type), x: Number(item.x), height: Number(item.height), dischargeCoefficient: Number(item.dischargeCoefficient),
+      slotWidth: Number(item.slotWidth), barSpacing: Number(item.barSpacing), blockageProbability: Number(item.blockageProbability), remobilizationShear: Number(item.remobilizationShear),
+    })).sort((a, b) => a.x - b.x || a.id.localeCompare(b.id));
+    c.observers = c.observers.map((item) => ({ id: String(item.id).trim(), name: String(item.name).trim(), x: Number(item.x) })).sort((a, b) => a.x - b.x);
+    c.boundaries = { right: String(c.boundaries.right) };
+    c.grid2d = Object.assign({}, c.grid2d, {
+      enabled: Boolean(c.grid2d.enabled), nx: Number(c.grid2d.nx), ny: Number(c.grid2d.ny), dx: Number(c.grid2d.dx), dy: Number(c.grid2d.dy),
+      originX: Number(c.grid2d.originX), originY: Number(c.grid2d.originY), elevation: c.grid2d.elevation.map(Number),
+    });
+    c.uncertainty = { method: String(c.uncertainty.method), cases: Number(c.uncertainty.cases), seed: Number(c.uncertainty.seed) };
+    c.provenance = c.provenance.map((item) => ({ id: String(item.id), key: String(item.key), value: String(item.value) }));
+    return c;
+  }
+
+  function validateCase(source) {
+    const errors = [];
+    const warnings = [];
+    const check = (fn) => { try { fn(); } catch (error) { errors.push(error.message); } };
+    let c;
+    try { c = normalizeCase(source); } catch (error) { throw new ValidationError("ケースを正規化できません", [error.message]); }
+    check(() => assertFinite(c.schemaVersion, "schemaVersion", 1, 1, true));
+    if (!c.meta.name || c.meta.name.length > 120) errors.push("ケース名は1～120文字にしてください");
+    if (!["standard1d", "coupled1d2d", "advanced"].includes(c.solver.model)) errors.push("モデルが不正です");
+    check(() => assertFinite(c.solver.duration, "計算時間", 0.01, 86400));
+    check(() => assertFinite(c.solver.outputInterval, "出力間隔", 0.001, c.solver.duration));
+    check(() => assertFinite(c.solver.cfl, "CFL", 0.05, 0.9));
+    check(() => assertFinite(c.solver.seed, "乱数Seed", 0, 0xffffffff, true));
+    check(() => assertFinite(c.solver.dryDepth, "乾床閾値", 1e-12, 0.1));
+    check(() => assertFinite(c.solver.maxDt, "最大dt", 1e-8, 10));
+    check(() => assertFinite(c.solver.estimatedMinDt, "推定最小dt", 1e-9, c.solver.maxDt));
+    check(() => assertFinite(c.solver.maxSteps, "step上限", 1, LIMITS.maxSteps, true));
+    for (const [key, bounds] of Object.entries({
+      fluidDensity: [500, 3000], solidDensity: [1000, 6000], porosity: [0.01, 0.8], manning: [0, 1], maxConcentration: [0.05, 0.85],
+      internalFrictionDeg: [1, 89], erosionCoefficient: [0, 1], depositionCoefficient: [0, 10], yieldDepositionVelocity: [0, 100],
+      yieldDepositionCoefficient: [0, 10], activeLayerThickness: [1e-6, 1000],
+    })) check(() => assertFinite(c.material[key], "material." + key, bounds[0], bounds[1]));
+    if (c.material.solidDensity <= c.material.fluidDensity) errors.push("固相密度は液相密度より大きくしてください");
+    if (c.grains.length < LIMITS.minGrains || c.grains.length > LIMITS.maxGrains) errors.push("粒径数は2～8です");
+    const grainIds = new Set();
+    let grainFraction = 0;
+    for (const grain of c.grains) {
+      if (!/^[A-Za-z0-9_-]{1,32}$/.test(grain.id) || grainIds.has(grain.id)) errors.push("粒径IDが不正または重複しています: " + grain.id);
+      grainIds.add(grain.id);
+      check(() => assertFinite(grain.diameter, "粒径", 1e-6, 10));
+      check(() => assertFinite(grain.fraction, "粒径割合", 0, 1));
+      check(() => assertFinite(grain.settlingVelocity, "沈降速度", 0, 100));
+      grainFraction += grain.fraction;
+    }
+    if (Math.abs(grainFraction - 1) > 1e-12) errors.push("粒径割合の合計が1ではありません");
+    if (c.cells1d.length < 3 || c.cells1d.length > LIMITS.maxCells1D) errors.push("1Dセル数が範囲外です");
+    const safeId = /^[A-Za-z0-9_-]{1,32}$/;
+    const cellIds = new Set();
+    let lastX = -Infinity;
+    for (const cell of c.cells1d) {
+      if (!safeId.test(cell.id) || cellIds.has(cell.id)) errors.push("1DセルIDが不正または重複しています: " + cell.id);
+      cellIds.add(cell.id);
+      for (const key of ["x", "fixedBed", "bed", "width", "initialDepth"]) check(() => assertFinite(cell[key], "cell." + key));
+      if (cell.x <= lastX) errors.push("1Dセル座標は単調増加である必要があります");
+      lastX = cell.x;
+      if (!(cell.width > 0)) errors.push("河幅は正である必要があります");
+      if (cell.bed < cell.fixedBed) errors.push("移動床が固定床を下回っています");
+      if (cell.initialDepth < 0) errors.push("初期水深が負です");
+    }
+    if (c.inflow.length < 2) errors.push("流入ハイドログラフは2点以上必要です");
+    let lastTime = -Infinity;
+    for (const point of c.inflow) {
+      check(() => assertFinite(point.time, "流入時刻", 0, c.solver.duration));
+      if (point.time <= lastTime) errors.push("流入時刻は単調増加である必要があります");
+      lastTime = point.time;
+      check(() => assertFinite(point.discharge, "流入量", 0, 1e9));
+      if (point.concentrations.length !== c.grains.length) errors.push("流入濃度の粒径数が一致しません");
+      let concentration = 0;
+      for (const value of point.concentrations) { check(() => assertFinite(value, "流入濃度", 0, c.material.maxConcentration)); concentration += value; }
+      if (concentration > c.material.maxConcentration + 1e-12) errors.push("流入濃度合計が上限を超えています");
+    }
+    const structureIds = new Set();
+    for (const item of c.structures) {
+      if (!safeId.test(item.id) || structureIds.has(item.id)) errors.push("構造物IDが不正または重複しています: " + item.id);
+      structureIds.add(item.id);
+      if (!["impermeable", "slit", "grid"].includes(item.type)) errors.push("構造物種類が不正です");
+      if (c.cells1d.length) check(() => assertFinite(item.x, "ダム位置", c.cells1d[0].x, c.cells1d[c.cells1d.length - 1].x));
+      for (const [key, bounds] of Object.entries({ height: [0, 1000], dischargeCoefficient: [0, 5], slotWidth: [0, 100000], barSpacing: [0, 1000], blockageProbability: [0, 1], remobilizationShear: [0, 1e9] })) check(() => assertFinite(item[key], "structure." + key, bounds[0], bounds[1]));
+    }
+    const observerIds = new Set();
+    for (const observer of c.observers) {
+      if (!safeId.test(observer.id) || observerIds.has(observer.id)) errors.push("観測点IDが不正または重複しています: " + observer.id);
+      observerIds.add(observer.id);
+      if (!observer.name || observer.name.length > 120) errors.push("観測点名が不正です: " + observer.id);
+      if (c.cells1d.length) check(() => assertFinite(observer.x, "観測点位置", c.cells1d[0].x, c.cells1d[c.cells1d.length - 1].x));
+    }
+    if (!["open", "closed"].includes(c.boundaries.right)) errors.push("下流境界が不正です");
+    if (c.grid2d.enabled) {
+      check(() => assertFinite(c.grid2d.nx, "2D nx", 2, 4096, true));
+      check(() => assertFinite(c.grid2d.ny, "2D ny", 2, 4096, true));
+      if (c.grid2d.nx * c.grid2d.ny > LIMITS.maxCells2D) errors.push("2Dセル数が上限を超えています");
+      if (c.grid2d.elevation.length !== c.grid2d.nx * c.grid2d.ny) errors.push("2D標高配列長が一致しません");
+      for (const value of c.grid2d.elevation) if (!Number.isFinite(value)) { errors.push("2D標高に非有限値があります"); break; }
+    }
+    check(() => assertFinite(c.uncertainty.cases, "ensemble case数", 1, LIMITS.maxEnsemble, true));
+    const estimatedBytes = estimateCaseBytes(c);
+    const estimatedSteps = Math.ceil(c.solver.duration / Math.min(c.solver.estimatedMinDt, estimateMinimumDt(c)));
+    if (estimatedBytes > LIMITS.maxAppBytes) errors.push("アプリ全体の推定ピークメモリが384MiBを超えます");
+    if (estimatedSteps > c.solver.maxSteps || estimatedSteps > LIMITS.maxSteps) errors.push("推定step数が上限を超えます");
+    if (c.solver.model !== "standard1d") warnings.push("選択モデルは実験段階です。数値カーネルの検証完了まで標準1Dを使用してください");
+    if (c.grid2d.enabled && c.grid2d.elevation.length && c.grid2d.elevation.every((value) => value === 0)) warnings.push("2D地形が全て0です");
+    if (errors.length) throw new ValidationError("ケース検証に失敗しました", errors.map((message) => ({ level: "error", message })).concat(warnings.map((message) => ({ level: "warning", message }))));
+    const frozen = deepFreeze(c);
+    const canonicalCsv = serializeCaseCsv(frozen, false);
+    return { caseData: frozen, hash: fnv1a(canonicalCsv), diagnostics: warnings.map((message) => ({ level: "warning", message })), estimatedBytes, estimatedSteps };
+  }
+
+  function parseCsv(text) {
+    if (typeof text !== "string") throw new ValidationError("CSV textが文字列ではありません");
+    if (textEncoder.encode(text).byteLength > LIMITS.maxCsvBytes) throw new ValidationError("CSVが10MiB上限を超えています");
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    const rows = [];
+    let row = [];
+    let field = "";
+    let quoted = false;
+    let afterQuote = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (quoted) {
+        if (ch === '"') {
+          if (text[i + 1] === '"') { field += '"'; i++; }
+          else { quoted = false; afterQuote = true; }
+        } else field += ch;
+      } else if (afterQuote) {
+        if (ch === ",") { row.push(field); field = ""; afterQuote = false; }
+        else if (ch === "\r" || ch === "\n") {
+          row.push(field); field = ""; afterQuote = false;
+          rows.push(row); row = [];
+          if (ch === "\r" && text[i + 1] === "\n") i++;
+        } else throw new ValidationError("引用符の直後に不正な文字があります", [{ level: "error", message: "文字位置 " + i }]);
+      } else if (ch === '"') {
+        if (field.length) throw new ValidationError("field途中の引用符は許可されません", [{ level: "error", message: "文字位置 " + i }]);
+        quoted = true;
+      } else if (ch === ",") { row.push(field); field = ""; }
+      else if (ch === "\r" || ch === "\n") {
+        row.push(field); field = "";
+        rows.push(row); row = [];
+        if (ch === "\r" && text[i + 1] === "\n") i++;
+      } else field += ch;
+      if (field.length > LIMITS.maxFieldLength) throw new ValidationError("CSV fieldが32KiB上限を超えています");
+      if (rows.length > LIMITS.maxCsvRows) throw new ValidationError("CSVが250,000行上限を超えています");
+    }
+    if (quoted) throw new ValidationError("CSVの引用符が閉じていません");
+    if (afterQuote || field.length || row.length) { row.push(field); rows.push(row); }
+    while (rows.length && rows[rows.length - 1].every((value) => value === "")) rows.pop();
+    if (!rows.length) throw new ValidationError("CSVが空です");
+    const width = rows[0].length;
+    for (let i = 0; i < rows.length; i++) if (rows[i].length !== width) throw new ValidationError("CSV列数が一致しません", [{ level: "error", message: (i + 1) + "行目: " + rows[i].length + "列 / 期待" + width + "列" }]);
+    return rows;
+  }
+
+  function csvCell(value) {
+    let text = value === null || value === undefined ? "" : String(value);
+    if (typeof value === "string" && FORMULA_PREFIX.test(text)) text = "'" + text;
+    if (/[",\r\n]/.test(text)) text = '"' + text.replace(/"/g, '""') + '"';
+    return text;
+  }
+
+  function serializeRows(rows, bom = true) {
+    const output = rows.map((row) => row.map((value) => csvCell(value)).join(",")).join("\r\n") + "\r\n";
+    return (bom ? "\ufeff" : "") + output;
+  }
+
+  function serializeCaseCsv(c, bom = true) {
+    const rows = [CSV_HEADER.slice()];
+    const add = (section, id, parentId, time, x, y, z, quantity, value, unit, text) => rows.push([SCHEMA_VERSION, section, id || "", parentId || "", time ?? "", x ?? "", y ?? "", z ?? "", quantity, value ?? "", unit || "", text || ""]);
+    add("meta", "case", "", "", "", "", "", "name", "", "", c.meta.name);
+    const solverUnits = { duration: "s", outputInterval: "s", cfl: "1", seed: "1", dryDepth: "m", maxDt: "s", estimatedMinDt: "s", maxSteps: "1" };
+    add("solver", "solver", "", "", "", "", "", "model", "", "", c.solver.model);
+    for (const key of Object.keys(solverUnits)) add("solver", "solver", "", "", "", "", "", key, c.solver[key], solverUnits[key], "");
+    const materialUnits = { fluidDensity: "kg/m3", solidDensity: "kg/m3", porosity: "1", manning: "s/m^(1/3)", maxConcentration: "1", internalFrictionDeg: "deg", erosionCoefficient: "1", depositionCoefficient: "1", yieldDepositionVelocity: "m/s", yieldDepositionCoefficient: "1/s", activeLayerThickness: "m" };
+    for (const key of Object.keys(materialUnits)) add("material", "material", "", "", "", "", "", key, c.material[key], materialUnits[key], "");
+    for (const grain of c.grains) {
+      add("grain", grain.id, "", "", "", "", "", "diameter", grain.diameter, "m", "");
+      add("grain", grain.id, "", "", "", "", "", "fraction", grain.fraction, "1", "");
+      add("grain", grain.id, "", "", "", "", "", "settlingVelocity", grain.settlingVelocity, "m/s", "");
+    }
+    for (const cell of c.cells1d) {
+      add("cell_1d", cell.id, "", "", cell.x, "", cell.bed, "fixedBed", cell.fixedBed, "m", "");
+      add("cell_1d", cell.id, "", "", cell.x, "", cell.bed, "bed", cell.bed, "m", "");
+      add("cell_1d", cell.id, "", "", cell.x, "", cell.bed, "width", cell.width, "m", "");
+      add("cell_1d", cell.id, "", "", cell.x, "", cell.bed, "initialDepth", cell.initialDepth, "m", "");
+    }
+    for (const point of c.inflow) {
+      add("inflow", point.id, "", point.time, "", "", "", "discharge", point.discharge, "m3/s", "");
+      c.grains.forEach((grain, index) => add("inflow", point.id, grain.id, point.time, "", "", "", "concentration", point.concentrations[index], "1", ""));
+    }
+    for (const item of c.structures) {
+      add("structure", item.id, "", "", item.x, "", "", "type", "", "", item.type);
+      for (const [key, unit] of Object.entries({ height: "m", dischargeCoefficient: "1", slotWidth: "m", barSpacing: "m", blockageProbability: "1/s", remobilizationShear: "Pa" })) add("structure", item.id, "", "", item.x, "", "", key, item[key], unit, "");
+    }
+    for (const item of c.observers) add("observer", item.id, "", "", item.x, "", "", "name", "", "", item.name);
+    add("boundary", "downstream", "", "", "", "", "", "right", "", "", c.boundaries.right);
+    for (const [key, unit] of Object.entries({ enabled: "1", nx: "1", ny: "1", dx: "m", dy: "m", originX: "m", originY: "m" })) add("grid_2d", "grid", "", "", "", "", "", key, key === "enabled" ? Number(c.grid2d.enabled) : c.grid2d[key], unit, "");
+    if (c.grid2d.enabled) for (let index = 0; index < c.grid2d.elevation.length; index++) {
+      const ix = index % c.grid2d.nx, iy = Math.floor(index / c.grid2d.nx);
+      add("grid_2d", "g" + index, "grid", "", c.grid2d.originX + ix * c.grid2d.dx, c.grid2d.originY + iy * c.grid2d.dy, c.grid2d.elevation[index], "elevation", c.grid2d.elevation[index], "m", "");
+    }
+    add("uncertainty", "ensemble", "", "", "", "", "", "method", "", "", c.uncertainty.method);
+    add("uncertainty", "ensemble", "", "", "", "", "", "cases", c.uncertainty.cases, "1", "");
+    add("uncertainty", "ensemble", "", "", "", "", "", "seed", c.uncertainty.seed, "1", "");
+    for (const item of c.provenance) add("provenance", item.id, "", "", "", "", "", item.key, "", "", item.value);
+    return serializeRows(rows, bom);
+  }
+
+  function numberCell(value, label, allowBlank = false) {
+    if (value === "" && allowBlank) return null;
+    if (value.trim() === "") throw new ValidationError(label + "が空です");
+    const number = Number(value);
+    if (!Number.isFinite(number)) throw new ValidationError(label + "が有限数ではありません");
+    return number;
+  }
+
+  function parseCaseCsv(text) {
+    const rows = parseCsv(text);
+    if (rows[0].length !== CSV_HEADER.length || rows[0].some((value, index) => value !== CSV_HEADER[index])) throw new ValidationError("CSV headerが仕様と一致しません", [{ level: "error", message: "期待: " + CSV_HEADER.join(",") }]);
+    const c = makeReferenceCase();
+    c.grains = [];
+    c.cells1d = [];
+    c.inflow = [];
+    c.structures = [];
+    c.observers = [];
+    c.provenance = [];
+    c.grid2d.elevation = [];
+    const grains = new Map(), cells = new Map(), inflows = new Map(), structures = new Map(), observers = new Map();
+    const seen = new Set();
+    const required = new Set([
+      "meta:name", "solver:model", "solver:duration", "solver:outputInterval", "solver:cfl", "solver:seed", "solver:dryDepth", "solver:maxDt", "solver:estimatedMinDt", "solver:maxSteps",
+      "material:fluidDensity", "material:solidDensity", "material:porosity", "material:manning", "material:maxConcentration", "material:internalFrictionDeg",
+      "material:erosionCoefficient", "material:depositionCoefficient", "material:yieldDepositionVelocity", "material:yieldDepositionCoefficient", "material:activeLayerThickness",
+      "boundary:right", "grid_2d:enabled", "grid_2d:nx", "grid_2d:ny", "grid_2d:dx", "grid_2d:dy", "grid_2d:originX", "grid_2d:originY",
+      "uncertainty:method", "uncertainty:cases", "uncertainty:seed",
+    ]);
+    const allowedUnits = new Set(["", "1", "s", "m", "m/s", "m3/s", "kg/m3", "s/m^(1/3)", "deg", "1/s", "Pa"]);
+    for (let rowIndex = 1; rowIndex < rows.length; rowIndex++) {
+      const [versionRaw, section, id, parentId, timeRaw, xRaw, yRaw, zRaw, quantity, valueRaw, unit, textRaw] = rows[rowIndex];
+      const line = rowIndex + 1;
+      if (Number(versionRaw) !== SCHEMA_VERSION) throw new ValidationError(line + "行目のschema_versionが不正です");
+      if (!SECTIONS.has(section)) throw new ValidationError(line + "行目のsectionが未知です: " + section);
+      if (!allowedUnits.has(unit)) throw new ValidationError(line + "行目のunitが未知です: " + unit);
+      const key = section + ":" + id + ":" + parentId + ":" + quantity;
+      if (seen.has(key)) throw new ValidationError(line + "行目のレコードが重複しています: " + key);
+      seen.add(key);
+      required.delete(section + ":" + quantity);
+      const textValue = textRaw.startsWith("'") && FORMULA_PREFIX.test(textRaw.slice(1)) ? textRaw.slice(1) : textRaw;
+      if (section === "meta") {
+        if (quantity !== "name") throw new ValidationError(line + "行目のmeta quantityが未知です");
+        c.meta.name = textValue;
+      } else if (section === "solver") {
+        if (quantity === "model") c.solver.model = textValue;
+        else if (quantity in c.solver) c.solver[quantity] = numberCell(valueRaw, line + "行目のvalue");
+        else throw new ValidationError(line + "行目のsolver quantityが未知です");
+      } else if (section === "material") {
+        if (!(quantity in c.material)) throw new ValidationError(line + "行目のmaterial quantityが未知です");
+        c.material[quantity] = numberCell(valueRaw, line + "行目のvalue");
+      } else if (section === "grain") {
+        if (!/^[A-Za-z0-9_-]{1,32}$/.test(id)) throw new ValidationError(line + "行目の粒径IDが不正です");
+        const item = grains.get(id) || { id };
+        if (!["diameter", "fraction", "settlingVelocity"].includes(quantity)) throw new ValidationError(line + "行目のgrain quantityが未知です");
+        item[quantity] = numberCell(valueRaw, line + "行目のvalue");
+        grains.set(id, item);
+      } else if (section === "cell_1d") {
+        const item = cells.get(id) || { id, x: numberCell(xRaw, line + "行目のx_m") };
+        if (!["fixedBed", "bed", "width", "initialDepth"].includes(quantity)) throw new ValidationError(line + "行目のcell quantityが未知です");
+        item[quantity] = numberCell(valueRaw, line + "行目のvalue");
+        cells.set(id, item);
+      } else if (section === "inflow") {
+        const item = inflows.get(id) || { id, time: numberCell(timeRaw, line + "行目のtime_s"), discharge: undefined, byGrain: new Map() };
+        if (quantity === "discharge") item.discharge = numberCell(valueRaw, line + "行目のvalue");
+        else if (quantity === "concentration") {
+          if (!parentId) throw new ValidationError(line + "行目の濃度にgrain parent_idがありません");
+          if (item.byGrain.has(parentId)) throw new ValidationError(line + "行目の濃度が重複しています");
+          item.byGrain.set(parentId, numberCell(valueRaw, line + "行目のvalue"));
+        } else throw new ValidationError(line + "行目のinflow quantityが未知です");
+        inflows.set(id, item);
+      } else if (section === "structure") {
+        const item = structures.get(id) || { id, x: numberCell(xRaw, line + "行目のx_m") };
+        if (quantity === "type") item.type = textValue;
+        else if (["height", "dischargeCoefficient", "slotWidth", "barSpacing", "blockageProbability", "remobilizationShear"].includes(quantity)) item[quantity] = numberCell(valueRaw, line + "行目のvalue");
+        else throw new ValidationError(line + "行目のstructure quantityが未知です");
+        structures.set(id, item);
+      } else if (section === "observer") {
+        if (quantity !== "name") throw new ValidationError(line + "行目のobserver quantityが未知です");
+        observers.set(id, { id, name: textValue, x: numberCell(xRaw, line + "行目のx_m") });
+      } else if (section === "boundary") {
+        if (quantity !== "right") throw new ValidationError(line + "行目のboundary quantityが未知です");
+        c.boundaries.right = textValue;
+      } else if (section === "grid_2d") {
+        if (quantity === "elevation") c.grid2d.elevation.push(numberCell(valueRaw, line + "行目のvalue"));
+        else if (["enabled", "nx", "ny", "dx", "dy", "originX", "originY"].includes(quantity)) c.grid2d[quantity] = quantity === "enabled" ? numberCell(valueRaw, line + "行目のvalue") === 1 : numberCell(valueRaw, line + "行目のvalue");
+        else throw new ValidationError(line + "行目のgrid_2d quantityが未知です");
+      } else if (section === "uncertainty") {
+        if (quantity === "method") c.uncertainty.method = textValue;
+        else if (["cases", "seed"].includes(quantity)) c.uncertainty[quantity] = numberCell(valueRaw, line + "行目のvalue");
+        else throw new ValidationError(line + "行目のuncertainty quantityが未知です");
+      } else if (section === "provenance") c.provenance.push({ id, key: quantity, value: textValue });
+    }
+    if (required.size) throw new ValidationError("必須レコードが不足しています", Array.from(required, (key) => ({ level: "error", message: key })));
+    for (const item of grains.values()) if (["diameter", "fraction", "settlingVelocity"].some((key) => item[key] === undefined)) throw new ValidationError("粒径レコードが不完全です: " + item.id);
+    c.grains = Array.from(grains.values()).sort((a, b) => a.diameter - b.diameter);
+    for (const item of cells.values()) if (["fixedBed", "bed", "width", "initialDepth"].some((key) => item[key] === undefined)) throw new ValidationError("1Dセルレコードが不完全です: " + item.id);
+    c.cells1d = Array.from(cells.values()).sort((a, b) => a.x - b.x);
+    for (const item of inflows.values()) {
+      if (item.discharge === undefined) throw new ValidationError("流入量レコードが不足しています: " + item.id);
+      item.concentrations = c.grains.map((grain) => {
+        if (!item.byGrain.has(grain.id)) throw new ValidationError("流入濃度が不足しています: " + item.id + "/" + grain.id);
+        return item.byGrain.get(grain.id);
+      });
+      delete item.byGrain;
+    }
+    c.inflow = Array.from(inflows.values()).sort((a, b) => a.time - b.time);
+    for (const item of structures.values()) if (["type", "height", "dischargeCoefficient", "slotWidth", "barSpacing", "blockageProbability", "remobilizationShear"].some((key) => item[key] === undefined)) throw new ValidationError("構造物レコードが不完全です: " + item.id);
+    c.structures = Array.from(structures.values()).sort((a, b) => a.x - b.x);
+    c.observers = Array.from(observers.values()).sort((a, b) => a.x - b.x);
+    return validateCase(c);
+  }
+
+  function validateWorkerMessage(message, activeRequestId, expectedProfileLength) {
+    if (!message || typeof message !== "object" || Array.isArray(message)) throw new ValidationError("Worker応答がobjectではありません");
+    if (message.protocolVersion !== PROTOCOL_VERSION) throw new ValidationError("Worker protocol versionが一致しません");
+    if (typeof message.requestId !== "string" || !message.requestId) throw new ValidationError("Worker requestIdが不正です");
+    if (activeRequestId && message.requestId !== activeRequestId) return { stale: true };
+    if (!["ready", "progress", "frame", "checkpoint", "complete", "error"].includes(message.type)) throw new ValidationError("Worker応答typeが未知です");
+    if (message.type === "frame") {
+      const n = message.lengths && message.lengths.profile;
+      if (!Number.isInteger(n) || n < 3 || n > LIMITS.maxCells1D || (expectedProfileLength && n !== expectedProfileLength)) throw new ValidationError("Worker profile長が不正です");
+      if (!message.buffers || typeof message.buffers !== "object") throw new ValidationError("Worker frame buffersがありません");
+      for (const key of ["x", "bed", "fixedBed", "surface", "discharge", "concentration"]) {
+        const buffer = message.buffers[key];
+        if (!(buffer instanceof ArrayBuffer) || buffer.byteLength !== n * Float64Array.BYTES_PER_ELEMENT) throw new ValidationError("Worker buffer長が不正です: " + key);
+        const values = new Float64Array(buffer);
+        for (let index = 0; index < values.length; index++) if (!Number.isFinite(values[index])) throw new ValidationError("Worker bufferに非有限値があります: " + key + "[" + index + "]");
+      }
+      for (const key of ["time", "steps", "waterError", "sedimentError", "minDepth", "maxConcentration", "maxCfl"]) {
+        const value = key in message ? message[key] : message.diagnostics && message.diagnostics[key];
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new ValidationError("Worker診断値が非有限です: " + key);
+      }
+      if (message.diagnostics.minDepth < -1e-10 || message.diagnostics.maxConcentration < -1e-12 || message.diagnostics.maxConcentration > 1 + 1e-12) throw new ValidationError("Worker診断値が物理範囲外です");
+    }
+    if (message.type === "progress" && message.progress !== undefined && (!Number.isFinite(message.progress) || message.progress < 0 || message.progress > 1)) throw new ValidationError("Worker progressが範囲外です");
+    if (message.type === "error" && typeof message.message !== "string") throw new ValidationError("Worker error messageが不正です");
+    return { stale: false };
+  }
+
+  class WorkerBridge {
+    constructor(sourceText) {
+      if (typeof Worker !== "function" || typeof Blob !== "function" || typeof URL.createObjectURL !== "function") throw new Error("Web Workerを利用できません");
+      const blob = new Blob([sourceText], { type: "text/javascript" });
+      this.url = URL.createObjectURL(blob);
+      this.worker = new Worker(this.url, { name: "dfds-solver" });
+      this.sequence = 0;
+      this.requests = new Map();
+      this.worker.addEventListener("message", (event) => this.handleMessage(event.data));
+      this.worker.addEventListener("error", (event) => this.handleFatal(event.message || "Worker error"));
+      this.worker.addEventListener("messageerror", () => this.handleFatal("Worker message clone error"));
+    }
+    nextId(prefix) { this.sequence++; return prefix + "-" + Date.now().toString(36) + "-" + this.sequence.toString(36); }
+    send(type, payload, handlers) {
+      const requestId = this.nextId(type);
+      this.requests.set(requestId, Object.assign({ type, expectedProfileLength: 0 }, handlers || {}));
+      this.worker.postMessage(Object.assign({ protocolVersion: PROTOCOL_VERSION, requestId, type }, payload || {}));
+      return requestId;
+    }
+    command(type, targetRequestId) { return this.send(type, { targetRequestId }, { transient: true }); }
+    handleMessage(message) {
+      const request = message && this.requests.get(message.requestId);
+      if (!request) return;
+      try {
+        const status = validateWorkerMessage(message, message.requestId, request.expectedProfileLength);
+        if (status.stale) return;
+        if (message.type === "frame" && request.onFrame) request.onFrame(message);
+        else if (message.type === "progress" && request.onProgress) request.onProgress(message);
+        else if (message.type === "ready" && request.onReady) request.onReady(message);
+        else if (message.type === "complete") {
+          if (request.onComplete) request.onComplete(message);
+          this.requests.delete(message.requestId);
+        } else if (message.type === "error") {
+          if (request.onError) request.onError(new Error(message.message), message);
+          this.requests.delete(message.requestId);
+        }
+        if (request.transient && ["progress", "complete", "error", "ready"].includes(message.type)) this.requests.delete(message.requestId);
+      } catch (error) {
+        if (request.onError) request.onError(error, { code: "INVALID_RESPONSE" });
+        this.requests.delete(message.requestId);
+      }
+    }
+    handleFatal(message) {
+      const error = new Error(message);
+      for (const request of this.requests.values()) if (request.onError) request.onError(error, { code: "WORKER_FATAL" });
+      this.requests.clear();
+    }
+    terminate() {
+      this.worker.terminate();
+      URL.revokeObjectURL(this.url);
+      this.requests.clear();
+    }
+  }
+
+  class Store {
+    constructor(initial) { this.state = initial; this.listeners = new Set(); }
+    get() { return this.state; }
+    set(patch) {
+      const previous = this.state;
+      this.state = Object.assign({}, previous, typeof patch === "function" ? patch(previous) : patch);
+      for (const listener of this.listeners) listener(this.state, previous);
+    }
+    subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  }
+
+  return Object.freeze({
+    PROTOCOL_VERSION, SCHEMA_VERSION, LIMITS, CSV_HEADER,
+    ValidationError, Store, WorkerBridge,
+    clone, deepFreeze, fnv1a, makeReferenceCase, estimateCaseBytes,
+    normalizeCase, validateCase, parseCsv, serializeRows, serializeCaseCsv, parseCaseCsv,
+    validateWorkerMessage,
+  });
+})();
+  </script>
+  <script>
+"use strict";
+
+(() => {
+  const D = window.DFDS;
+  const byId = (id) => document.getElementById(id);
+  const text = (node, value) => { node.textContent = String(value); };
+  const format = (value, digits = 3) => Number.isFinite(value) ? value.toLocaleString("ja-JP", { maximumFractionDigits: digits }) : "—";
+  const bytes = (value) => value < 1024 * 1024 ? format(value / 1024, 1) + " KiB" : format(value / (1024 * 1024), 1) + " MiB";
+  const dom = Object.fromEntries([
+    "runState", "caseHash", "caseName", "modelMode", "experimentalNotice", "durationInput", "outputIntervalInput", "cflInput", "seedInput", "computeEstimate",
+    "manningInput", "porosityInput", "fluidDensityInput", "solidDensityInput", "geometryMeta", "grainTableBody", "damTableBody", "progressBar",
+    "profileCanvas", "terrainCanvas", "hydrographCanvas", "massCanvas", "validationList", "timelineRange", "timelineCurrent", "timelineEnd",
+    "metricTime", "metricSteps", "metricWaterError", "metricSedimentError", "metricMinDepth", "metricCfl", "diagnosticCount", "diagnosticSummary",
+    "statusLog", "reproHash", "reproFrames", "workerState", "workspace", "csvFileInput", "importDialog", "importFileMeta", "importSummary",
+    "importDiagnostics", "importApplyButton", "runButton", "pauseButton", "cancelButton",
+  ].map((id) => [id, byId(id)]));
+
+  const allowedTransitions = Object.freeze({
+    idle: new Set(["validating", "running", "error"]),
+    validating: new Set(["idle", "error"]),
+    running: new Set(["paused", "cancelling", "idle", "error"]),
+    paused: new Set(["running", "cancelling", "error"]),
+    cancelling: new Set(["idle", "error"]),
+    error: new Set(["idle", "validating", "running"]),
+  });
+  const store = new D.Store({
+    phase: "idle", rawCase: D.makeReferenceCase(), validated: null, frames: [], selectedFrame: 0,
+    activeRunId: null, paused: false, tests: [], importCandidate: null, view: "profile", logs: [], progress: 0,
+  });
+  let bridge = null;
+  let resizeFrame = 0;
+
+  function transition(next, label) {
+    const current = store.get().phase;
+    if (next !== current && !(allowedTransitions[current] && allowedTransitions[current].has(next))) throw new Error("不正な状態遷移です: " + current + " → " + next);
+    store.set({ phase: next });
+    dom.runState.dataset.state = next === "cancelling" ? "paused" : next;
+    text(dom.runState, label || ({ idle: "準備完了", validating: "検証中", running: "計算中", paused: "一時停止", cancelling: "停止処理中", error: "エラー" }[next]));
+    const busy = ["running", "paused", "cancelling"].includes(next);
+    dom.runButton.disabled = busy;
+    dom.pauseButton.disabled = !["running", "paused"].includes(next);
+    dom.pauseButton.textContent = next === "paused" ? "再開" : "一時停止";
+    dom.cancelButton.disabled = !["running", "paused"].includes(next);
+  }
+
+  function addLog(message, level = "info") {
+    const entry = { time: new Date(), message: String(message), level };
+    const logs = store.get().logs.concat(entry).slice(-24);
+    store.set({ logs });
+    const item = document.createElement("li");
+    item.dataset.level = level;
+    const stamp = document.createElement("time");
+    stamp.textContent = entry.time.toLocaleTimeString("ja-JP", { hour12: false });
+    const body = document.createElement("span");
+    body.textContent = entry.message;
+    item.append(stamp, body);
+    dom.statusLog.replaceChildren(...logs.map((record) => {
+      const row = item.cloneNode(false);
+      row.dataset.level = record.level;
+      const t = document.createElement("time");
+      t.textContent = record.time.toLocaleTimeString("ja-JP", { hour12: false });
+      const b = document.createElement("span");
+      b.textContent = record.message;
+      row.append(t, b);
+      return row;
+    }));
+  }
+
+  function inputNumber(id, value) { byId(id).value = Number.isFinite(value) ? String(value) : ""; }
+
+  function syncForm(c) {
+    dom.caseName.value = c.meta.name;
+    dom.modelMode.value = c.solver.model;
+    inputNumber("durationInput", c.solver.duration);
+    inputNumber("outputIntervalInput", c.solver.outputInterval);
+    inputNumber("cflInput", c.solver.cfl);
+    inputNumber("seedInput", c.solver.seed);
+    inputNumber("manningInput", c.material.manning);
+    inputNumber("porosityInput", c.material.porosity);
+    inputNumber("fluidDensityInput", c.material.fluidDensity);
+    inputNumber("solidDensityInput", c.material.solidDensity);
+    dom.experimentalNotice.classList.toggle("hidden", c.solver.model === "standard1d");
+    text(dom.geometryMeta, c.cells1d.length + " cells / " + c.grains.length + " grains");
+    renderGrains(c);
+    renderDams(c);
+  }
+
+  function makeNumericCell(value, min, max, step, onChange) {
+    const input = document.createElement("input");
+    input.type = "number";
+    input.value = String(value);
+    input.min = String(min);
+    input.max = String(max);
+    input.step = String(step);
+    input.addEventListener("change", () => onChange(Number(input.value)));
+    const cell = document.createElement("td");
+    cell.append(input);
+    return cell;
+  }
+
+  function renderGrains(c) {
+    const rows = c.grains.map((grain, index) => {
+      const row = document.createElement("tr");
+      const name = document.createElement("td");
+      name.textContent = grain.id;
+      row.append(name,
+        makeNumericCell(grain.diameter, 0.000001, 10, 0.001, (value) => updateNested("grain", index, "diameter", value)),
+        makeNumericCell(grain.fraction, 0, 1, 0.01, (value) => updateNested("grain", index, "fraction", value)));
+      return row;
+    });
+    dom.grainTableBody.replaceChildren(...rows);
+  }
+
+  function renderDams(c) {
+    const rows = c.structures.map((dam, index) => {
+      const row = document.createElement("tr");
+      const typeCell = document.createElement("td");
+      const select = document.createElement("select");
+      for (const [value, label] of [["impermeable", "不透過"], ["slit", "スリット"], ["grid", "格子"]]) {
+        const option = document.createElement("option"); option.value = value; option.textContent = label; option.selected = dam.type === value; select.append(option);
+      }
+      select.setAttribute("aria-label", dam.id + " 種類");
+      select.addEventListener("change", () => updateNested("dam", index, "type", select.value));
+      typeCell.append(select);
+      const removeCell = document.createElement("td");
+      const remove = document.createElement("button");
+      remove.type = "button"; remove.className = "compact ghost"; remove.textContent = "削除"; remove.setAttribute("aria-label", dam.id + "を削除");
+      remove.addEventListener("click", () => {
+        const next = D.clone(store.get().rawCase); next.structures.splice(index, 1); applyEditedCase(next, "砂防ダムを削除しました");
+      });
+      removeCell.append(remove);
+      row.append(typeCell,
+        makeNumericCell(dam.x, c.cells1d[0].x, c.cells1d[c.cells1d.length - 1].x, 1, (value) => updateNested("dam", index, "x", value)),
+        makeNumericCell(dam.height, 0, 1000, 0.1, (value) => updateNested("dam", index, "height", value)), removeCell);
+      return row;
+    });
+    dom.damTableBody.replaceChildren(...rows);
+  }
+
+  function updateNested(kind, index, key, value) {
+    const next = D.clone(store.get().rawCase);
+    (kind === "grain" ? next.grains : next.structures)[index][key] = value;
+    applyEditedCase(next);
+  }
+
+  function collectForm() {
+    const next = D.clone(store.get().rawCase);
+    next.meta.name = dom.caseName.value;
+    next.solver.model = dom.modelMode.value;
+    next.solver.duration = Number(dom.durationInput.value);
+    next.solver.outputInterval = Number(dom.outputIntervalInput.value);
+    next.solver.cfl = Number(dom.cflInput.value);
+    next.solver.seed = Number(dom.seedInput.value);
+    next.material.manning = Number(dom.manningInput.value);
+    next.material.porosity = Number(dom.porosityInput.value);
+    next.material.fluidDensity = Number(dom.fluidDensityInput.value);
+    next.material.solidDensity = Number(dom.solidDensityInput.value);
+    return next;
+  }
+
+  function applyEditedCase(next, logMessage) {
+    store.set({ rawCase: next, validated: null, frames: [], selectedFrame: 0 });
+    dom.caseHash.textContent = "未検証";
+    dom.reproHash.textContent = "—";
+    dom.reproFrames.textContent = "0";
+    if (logMessage) addLog(logMessage);
+    syncForm(next);
+    renderAll();
+    validateInputs(false);
+  }
+
+  function showDiagnostics(items, summary) {
+    const normalized = Array.isArray(items) ? items : [];
+    dom.diagnosticCount.textContent = normalized.length + "件";
+    dom.diagnosticSummary.className = "notice" + (normalized.some((item) => item.level === "error") ? " danger" : normalized.some((item) => item.level === "warning") ? " warning" : "");
+    dom.diagnosticSummary.textContent = summary || (normalized.length ? "確認事項があります。" : "入力は検証済みです。");
+  }
+
+  function validateInputs(announce = true) {
+    try {
+      const result = D.validateCase(collectForm());
+      store.set({ rawCase: D.clone(result.caseData), validated: result });
+      dom.caseHash.textContent = result.hash;
+      dom.reproHash.textContent = result.hash;
+      dom.computeEstimate.textContent = "推定 " + result.estimatedSteps.toLocaleString("ja-JP") + " step / " + bytes(result.estimatedBytes) + "（総ピーク）";
+      showDiagnostics(result.diagnostics, result.diagnostics.length ? "警告付きで入力を検証しました。" : "入力は計算可能です。");
+      if (announce) addLog("ケース検証に合格しました: " + result.hash, "success");
+      return result;
+    } catch (error) {
+      const details = error instanceof D.ValidationError && Array.isArray(error.diagnostics) ? error.diagnostics : [{ level: "error", message: error.message || String(error) }];
+      store.set({ validated: null });
+      dom.caseHash.textContent = "無効";
+      dom.reproHash.textContent = "—";
+      dom.computeEstimate.textContent = "入力エラーを修正してください。";
+      showDiagnostics(details, error.message || "入力検証に失敗しました");
+      if (announce) addLog((error.message || "検証失敗") + (details[0] && details[0].message ? ": " + details[0].message : ""), "error");
+      return null;
+    }
+  }
+
+  function initialFrame(c) {
+    const x = Float64Array.from(c.cells1d, (cell) => cell.x);
+    const bed = Float64Array.from(c.cells1d, (cell) => cell.bed);
+    const fixedBed = Float64Array.from(c.cells1d, (cell) => cell.fixedBed);
+    const surface = Float64Array.from(c.cells1d, (cell) => cell.bed + cell.initialDepth);
+    return { time: 0, steps: 0, x, bed, fixedBed, surface, discharge: new Float64Array(x.length), concentration: new Float64Array(x.length), diagnostics: { time: 0, steps: 0, waterError: 0, sedimentError: 0, minDepth: Math.min(...c.cells1d.map((cell) => cell.initialDepth)), maxConcentration: 0, maxCfl: 0 } };
+  }
+
+  function consumeFrame(message) {
+    const frame = {
+      time: message.time, steps: message.steps, diagnostics: D.clone(message.diagnostics),
+      x: new Float64Array(message.buffers.x), bed: new Float64Array(message.buffers.bed), fixedBed: new Float64Array(message.buffers.fixedBed),
+      surface: new Float64Array(message.buffers.surface), discharge: new Float64Array(message.buffers.discharge), concentration: new Float64Array(message.buffers.concentration),
+    };
+    const frames = store.get().frames.concat(frame).slice(-D.LIMITS.maxFrames);
+    store.set({ frames, selectedFrame: frames.length - 1 });
+    dom.reproFrames.textContent = String(frames.length);
+    dom.timelineRange.max = String(Math.max(0, frames.length - 1));
+    dom.timelineRange.value = String(frames.length - 1);
+    renderAll();
+  }
+
+  function startRun() {
+    const validated = validateInputs(true);
+    if (!validated) { transition("error", "入力エラー"); return; }
+    if (validated.caseData.solver.model !== "standard1d") {
+      transition("error", "実験モデル未検証");
+      addLog("この版では標準1Dだけが検証済みです。実験モデルの計算は開始しません。", "error");
+      return;
+    }
+    if (!bridge) { transition("error", "Worker利用不可"); return; }
+    store.set({ frames: [], selectedFrame: 0, progress: 0, paused: false });
+    transition("running", "計算中 0%");
+    let requestId = "";
+    requestId = bridge.send("run", { caseData: validated.caseData }, {
+      expectedProfileLength: validated.caseData.cells1d.length,
+      onFrame: (message) => { if (store.get().activeRunId === requestId) consumeFrame(message); },
+      onProgress: (message) => {
+        if (store.get().activeRunId !== requestId || !Number.isFinite(message.progress)) return;
+        const progress = Math.max(0, Math.min(1, message.progress));
+        store.set({ progress }); dom.progressBar.style.width = (progress * 100).toFixed(2) + "%"; transition("running", "計算中 " + Math.round(progress * 100) + "%");
+      },
+      onComplete: (message) => {
+        if (store.get().activeRunId !== requestId) return;
+        store.set({ activeRunId: null, progress: 1 }); dom.progressBar.style.width = "100%"; transition("idle", "計算完了");
+        addLog("計算完了: " + message.summary.steps.toLocaleString("ja-JP") + " step / " + store.get().frames.length + " frames", "success");
+      },
+      onError: (error, meta) => {
+        if (store.get().activeRunId !== requestId) return;
+        store.set({ activeRunId: null });
+        if (meta && meta.code === "CANCELLED") { transition("idle", "停止しました"); addLog("計算を停止しました", "warning"); }
+        else { transition("error", "計算エラー"); addLog(error.message || String(error), "error"); }
+      },
+    });
+    store.set({ activeRunId: requestId });
+    addLog("Workerへ検証済みケースを送信しました: " + validated.hash);
+  }
+
+  function togglePause() {
+    const state = store.get();
+    if (!state.activeRunId || !bridge) return;
+    if (state.phase === "running") {
+      bridge.command("pause", state.activeRunId); store.set({ paused: true }); transition("paused"); addLog("一時停止を要求しました");
+    } else if (state.phase === "paused") {
+      bridge.command("resume", state.activeRunId); store.set({ paused: false }); transition("running", "計算再開"); addLog("計算再開を要求しました");
+    }
+  }
+
+  function cancelRun() {
+    const state = store.get();
+    if (!state.activeRunId || !bridge) return;
+    bridge.command("cancel", state.activeRunId); transition("cancelling"); addLog("停止を要求しました", "warning");
+  }
+
+  function testResult(id, title, pass, detail, value = "", threshold = "") { return { id, title, status: pass ? "pass" : "fail", detail, value, threshold }; }
+
+  function renderTestResults(results, target = dom.validationList) {
+    const nodes = results.map((result) => {
+      const row = document.createElement("article"); row.className = "validation-item"; row.dataset.status = result.status;
+      const badge = document.createElement("span"); badge.className = "validation-status"; badge.textContent = result.status === "pass" ? "PASS" : result.status === "skip" ? "SKIP" : "FAIL";
+      const body = document.createElement("div");
+      const title = document.createElement("strong"); title.textContent = result.title;
+      const detail = document.createElement("p"); detail.textContent = result.detail + (result.value !== undefined && result.value !== "" ? " / 値: " + result.value : "") + (result.threshold ? " / 基準: " + result.threshold : "");
+      body.append(title, detail); row.append(badge, body); return row;
+    });
+    target.replaceChildren(...nodes);
+  }
+
+  function runSelfTests() {
+    transition("validating", "自己検証中");
+    const results = [];
+    let validated;
+    try {
+      validated = D.validateCase(D.makeReferenceCase());
+      const csv = D.serializeCaseCsv(validated.caseData);
+      const imported = D.parseCaseCsv(csv);
+      results.push(testResult("csv-roundtrip", "ケースCSV round-trip", imported.hash === validated.hash, "export→import後の正規化ハッシュ", imported.hash, validated.hash));
+      const formula = D.serializeRows([["=2+2", -1, "+cmd", "@risk"]], false);
+      results.push(testResult("csv-injection", "CSV式注入の無害化", formula.includes("'=2+2") && formula.includes("'+cmd") && formula.includes("'@risk") && formula.includes(",-1,"), "文字列先頭だけをアポストロフィで無害化し負数は保持"));
+      let malformedRejected = false;
+      try { D.parseCsv('a,b\r\n"unclosed,b'); } catch (_) { malformedRejected = true; }
+      results.push(testResult("csv-malformed", "閉じていない引用符の拒否", malformedRejected, "RFC 4180状態機械"));
+      let nanRejected = false;
+      try { D.parseCaseCsv(csv.replace(",1200,s,", ",NaN,s,")); } catch (_) { nanRejected = true; }
+      results.push(testResult("csv-nan", "NaN入力の拒否", nanRejected, "有限数検査"));
+      let infinityRejected = false;
+      try { D.parseCaseCsv(csv.replace(",1200,s,", ",Infinity,s,")); } catch (_) { infinityRejected = true; }
+      results.push(testResult("csv-infinity", "Infinity入力の拒否", infinityRejected, "有限数検査"));
+      let duplicateRejected = false;
+      try {
+        const lines = csv.replace(/^\ufeff/, "").trimEnd().split("\r\n");
+        D.parseCaseCsv(lines.concat(lines[2]).join("\r\n") + "\r\n");
+      } catch (_) { duplicateRejected = true; }
+      results.push(testResult("csv-duplicate", "重複レコードの拒否", duplicateRejected, "section/id/parent/quantity一意性"));
+      let unitRejected = false;
+      try { D.parseCaseCsv(csv.replace(",kg/m3,", ",pound,", )); } catch (_) { unitRejected = true; }
+      results.push(testResult("csv-unit", "未知単位の拒否", unitRejected, "既知SI unit allowlist"));
+      let sectionRejected = false;
+      try { D.parseCaseCsv(csv.replace(",meta,case,", ",unknown,case,")); } catch (_) { sectionRejected = true; }
+      results.push(testResult("csv-section", "未知sectionの拒否", sectionRejected, "section allowlist"));
+      let missingRejected = false;
+      try { D.parseCaseCsv(D.serializeRows(D.parseCsv(csv).filter((row, index) => index === 0 || !(row[1] === "solver" && row[8] === "duration")))); } catch (_) { missingRejected = true; }
+      results.push(testResult("csv-required", "必須レコード不足の拒否", missingRejected, "暗黙の既定値補完なし"));
+      let longFieldRejected = false;
+      try { D.parseCsv("a\r\n" + "x".repeat(D.LIMITS.maxFieldLength + 1)); } catch (_) { longFieldRejected = true; }
+      results.push(testResult("csv-field-limit", "32KiB field上限", longFieldRejected, "上限+1を拒否"));
+      let sizeRejected = false;
+      try { D.parseCsv("x".repeat(D.LIMITS.maxCsvBytes + 1)); } catch (_) { sizeRejected = true; }
+      results.push(testResult("csv-size-limit", "10MiB CSV上限", sizeRejected, "上限+1を拒否"));
+      let staleAccepted = false;
+      try { staleAccepted = D.validateWorkerMessage({ protocolVersion: 1, requestId: "old", type: "progress", progress: 0.5 }, "active").stale; } catch (_) { staleAccepted = false; }
+      results.push(testResult("worker-stale", "古いWorker応答の破棄", staleAccepted, "requestId不一致"));
+      let invalidBufferRejected = false;
+      try {
+        const bad = new Float64Array([0, 1, NaN]);
+        D.validateWorkerMessage({ protocolVersion: 1, requestId: "active", type: "frame", time: 0, steps: 0, diagnostics: { time: 0, steps: 0, waterError: 0, sedimentError: 0, minDepth: 0, maxConcentration: 0, maxCfl: 0 }, lengths: { profile: 3 }, buffers: { x: bad.buffer, bed: bad.buffer.slice(0), fixedBed: bad.buffer.slice(0), surface: bad.buffer.slice(0), discharge: bad.buffer.slice(0), concentration: bad.buffer.slice(0) } }, "active", 3);
+      } catch (_) { invalidBufferRejected = true; }
+      results.push(testResult("worker-buffer", "非有限Worker bufferの拒否", invalidBufferRejected, "転送配列を要素単位で検証"));
+    } catch (error) {
+      results.push(testResult("main-exception", "main thread自己試験", false, error.message || String(error)));
+    }
+    const finish = (workerResults) => {
+      const all = results.concat(Array.isArray(workerResults) ? workerResults : []);
+      store.set({ tests: all }); renderTestResults(all); setView("validation");
+      const failed = all.filter((item) => item.status !== "pass").length;
+      transition(failed ? "error" : "idle", failed ? "検証失敗" : "自己検証合格");
+      addLog("自己検証: " + (all.length - failed) + "/" + all.length + " 合格", failed ? "error" : "success");
+    };
+    if (!bridge) { finish([testResult("worker", "Web Worker", false, "Workerを生成できません")]); return; }
+    bridge.send("validate", {}, {
+      onComplete: (message) => finish(message.tests),
+      onError: (error) => finish([testResult("worker", "Worker自己試験", false, error.message || String(error))]),
+    });
+  }
+
+  function exportCase() {
+    const validated = validateInputs(true); if (!validated) return;
+    const blob = new Blob([D.serializeCaseCsv(validated.caseData)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob); const link = document.createElement("a");
+    link.href = url; link.download = "debris_flow_case_" + validated.hash + ".csv"; document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0); addLog("ケースCSVを保存しました: " + validated.hash, "success");
+  }
+
+  async function importFile(file) {
+    dom.importApplyButton.disabled = true; store.set({ importCandidate: null }); dom.importDiagnostics.replaceChildren();
+    dom.importFileMeta.textContent = file.name + " / " + bytes(file.size); dom.importSummary.className = "notice"; dom.importSummary.textContent = "検証中です。現在のケースはまだ変更されません。";
+    if (typeof dom.importDialog.showModal === "function") dom.importDialog.showModal(); else dom.importDialog.setAttribute("open", "");
+    try {
+      if (file.size > D.LIMITS.maxCsvBytes) throw new D.ValidationError("CSVが10MiB上限を超えています");
+      const candidate = D.parseCaseCsv(await file.text());
+      store.set({ importCandidate: candidate }); dom.importApplyButton.disabled = false; dom.importSummary.className = "notice";
+      dom.importSummary.textContent = "検証合格。適用するまで現在のケースを保持します。";
+      renderTestResults([testResult("import", "CSVケース検証", true, candidate.caseData.meta.name, candidate.hash, "schema 1")], dom.importDiagnostics);
+    } catch (error) {
+      dom.importSummary.className = "notice danger"; dom.importSummary.textContent = error.message || "CSV検証に失敗しました";
+      const details = error instanceof D.ValidationError && Array.isArray(error.diagnostics) ? error.diagnostics : [];
+      renderTestResults(details.slice(0, 20).map((item, index) => testResult("import-" + index, "入力エラー", false, item.message || String(item))), dom.importDiagnostics);
+      addLog("CSVを適用しませんでした: " + (error.message || String(error)), "error");
+    }
+  }
+
+  function applyImported() {
+    const candidate = store.get().importCandidate; if (!candidate) return;
+    store.set({ rawCase: D.clone(candidate.caseData), validated: candidate, frames: [], selectedFrame: 0, importCandidate: null });
+    syncForm(candidate.caseData); validateInputs(false); closeImport(); renderAll(); addLog("検証済みCSVケースを適用しました: " + candidate.hash, "success");
+  }
+  function closeImport() { if (typeof dom.importDialog.close === "function") dom.importDialog.close(); else dom.importDialog.removeAttribute("open"); dom.csvFileInput.value = ""; }
+
+  function setView(view) {
+    store.set({ view });
+    document.querySelectorAll("[data-view-pane]").forEach((pane) => pane.classList.toggle("active", pane.dataset.viewPane === view));
+    document.querySelectorAll(".view-tab").forEach((button) => button.setAttribute("aria-selected", String(button.dataset.view === view)));
+    scheduleRender();
+  }
+
+  function canvasContext(canvas) {
+    const rect = canvas.getBoundingClientRect(); const ratio = Math.min(2, window.devicePixelRatio || 1);
+    const width = Math.max(240, Math.round(rect.width * ratio)); const height = Math.max(130, Math.round(rect.height * ratio));
+    if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+    const context = canvas.getContext("2d"); context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    return { context, width: width / ratio, height: height / ratio };
+  }
+
+  function palette(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function drawEmpty(context, width, height, label) { context.clearRect(0, 0, width, height); context.fillStyle = palette("--muted"); context.font = "12px " + getComputedStyle(document.body).fontFamily; context.textAlign = "center"; context.fillText(label, width / 2, height / 2); }
+  function rangeOf(arrays, padding = 0.08) {
+    let min = Infinity, max = -Infinity;
+    for (const array of arrays) for (const value of array) if (Number.isFinite(value)) { min = Math.min(min, value); max = Math.max(max, value); }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 1];
+    const span = Math.max(1e-9, max - min); return [min - span * padding, max + span * padding];
+  }
+
+  function drawAxes(ctx, box, xRange, yRange, xLabel, yLabel) {
+    ctx.strokeStyle = palette("--grid"); ctx.fillStyle = palette("--muted"); ctx.lineWidth = 1; ctx.font = "11px " + getComputedStyle(document.body).fontFamily;
+    for (let i = 0; i <= 4; i++) {
+      const x = box.left + box.width * i / 4, y = box.top + box.height * i / 4;
+      ctx.beginPath(); ctx.moveTo(x, box.top); ctx.lineTo(x, box.top + box.height); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(box.left, y); ctx.lineTo(box.left + box.width, y); ctx.stroke();
+      ctx.textAlign = "center"; ctx.fillText(format(xRange[0] + (xRange[1] - xRange[0]) * i / 4, 1), x, box.top + box.height + 18);
+      ctx.textAlign = "right"; ctx.fillText(format(yRange[1] - (yRange[1] - yRange[0]) * i / 4, 2), box.left - 7, y + 4);
+    }
+    ctx.textAlign = "center"; ctx.fillText(xLabel, box.left + box.width / 2, box.top + box.height + 35);
+    ctx.save(); ctx.translate(13, box.top + box.height / 2); ctx.rotate(-Math.PI / 2); ctx.fillText(yLabel, 0, 0); ctx.restore();
+  }
+  function plotLine(ctx, box, xs, ys, xRange, yRange, color, dash) {
+    const px = (x) => box.left + (x - xRange[0]) / Math.max(1e-12, xRange[1] - xRange[0]) * box.width;
+    const py = (y) => box.top + (yRange[1] - y) / Math.max(1e-12, yRange[1] - yRange[0]) * box.height;
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.setLineDash(dash || []); ctx.beginPath();
+    for (let i = 0; i < xs.length; i++) { const x = px(xs[i]), y = py(ys[i]); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); }
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  function selectedFrame() {
+    const state = store.get(); return state.frames[state.selectedFrame] || initialFrame(state.validated ? state.validated.caseData : state.rawCase);
+  }
+  function drawProfile() {
+    const { context: ctx, width, height } = canvasContext(dom.profileCanvas); const frame = selectedFrame();
+    if (!frame.x.length) { drawEmpty(ctx, width, height, "縦断データなし"); return; }
+    ctx.clearRect(0, 0, width, height); const box = { left: 55, top: 22, width: Math.max(40, width - 76), height: Math.max(40, height - 68) };
+    const xRange = rangeOf([frame.x], 0); const yRange = rangeOf([frame.fixedBed, frame.bed, frame.surface]); drawAxes(ctx, box, xRange, yRange, "距離 x (m)", "標高 (m)");
+    plotLine(ctx, box, frame.x, frame.fixedBed, xRange, yRange, palette("--fixed"), [5, 4]);
+    plotLine(ctx, box, frame.x, frame.bed, xRange, yRange, palette("--bed"));
+    plotLine(ctx, box, frame.x, frame.surface, xRange, yRange, palette("--water"));
+    const c = store.get().validated ? store.get().validated.caseData : store.get().rawCase;
+    for (const dam of c.structures) {
+      const index = Array.from(frame.x).reduce((best, value, i) => Math.abs(value - dam.x) < Math.abs(frame.x[best] - dam.x) ? i : best, 0);
+      const px = box.left + (dam.x - xRange[0]) / Math.max(1e-12, xRange[1] - xRange[0]) * box.width;
+      const y0 = box.top + (yRange[1] - frame.bed[index]) / Math.max(1e-12, yRange[1] - yRange[0]) * box.height;
+      const y1 = box.top + (yRange[1] - (frame.bed[index] + dam.height)) / Math.max(1e-12, yRange[1] - yRange[0]) * box.height;
+      ctx.strokeStyle = palette("--warning"); ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(px, y0); ctx.lineTo(px, y1); ctx.stroke();
+      ctx.fillStyle = palette("--warning"); ctx.textAlign = "center"; ctx.font = "10px " + getComputedStyle(document.body).fontFamily; ctx.fillText(dam.type === "grid" ? "格" : dam.type === "slit" ? "ス" : "不", px, Math.max(box.top + 10, y1 - 4));
+    }
+  }
+
+  function drawSeries(canvas, title, getter, color, logarithmic = false) {
+    const { context: ctx, width, height } = canvasContext(canvas); const frames = store.get().frames;
+    if (!frames.length) { drawEmpty(ctx, width, height, title + "（計算後に表示）"); return; }
+    const xs = Float64Array.from(frames, (frame) => frame.time); const ys = Float64Array.from(frames, (frame) => { const value = getter(frame); return logarithmic ? Math.log10(Math.max(value, 1e-16)) : value; });
+    ctx.clearRect(0, 0, width, height); const box = { left: 52, top: 22, width: Math.max(40, width - 68), height: Math.max(35, height - 58) }; const xRange = rangeOf([xs], 0); const yRange = rangeOf([ys]);
+    drawAxes(ctx, box, xRange, yRange, "時刻 (s)", logarithmic ? "log10 相対誤差" : "流量 (m³/s)"); plotLine(ctx, box, xs, ys, xRange, yRange, color);
+    ctx.fillStyle = palette("--text"); ctx.textAlign = "left"; ctx.font = "bold 11px " + getComputedStyle(document.body).fontFamily; ctx.fillText(title, box.left, 14);
+  }
+
+  function drawTerrain() {
+    const { context: ctx, width, height } = canvasContext(dom.terrainCanvas); const c = store.get().validated ? store.get().validated.caseData : store.get().rawCase;
+    ctx.clearRect(0, 0, width, height);
+    if (!c.grid2d.enabled) { drawEmpty(ctx, width, height, "2D地形は無効です。標準1D縦断を使用中。"); return; }
+    const [min, max] = rangeOf([c.grid2d.elevation], 0); const cellW = width / c.grid2d.nx, cellH = height / c.grid2d.ny;
+    for (let iy = 0; iy < c.grid2d.ny; iy++) for (let ix = 0; ix < c.grid2d.nx; ix++) {
+      const value = c.grid2d.elevation[iy * c.grid2d.nx + ix]; const t = (value - min) / Math.max(1e-12, max - min); ctx.fillStyle = "hsl(" + (155 - 95 * t) + " 35% " + (18 + 35 * t) + "%)"; ctx.fillRect(ix * cellW, iy * cellH, Math.ceil(cellW), Math.ceil(cellH));
+    }
+  }
+
+  function renderMetrics(frame) {
+    const d = frame.diagnostics; dom.metricTime.textContent = format(d.time, 2) + " s"; dom.metricSteps.textContent = format(d.steps, 0);
+    dom.metricWaterError.textContent = Number.isFinite(d.waterError) ? d.waterError.toExponential(2) : "—";
+    dom.metricSedimentError.textContent = Number.isFinite(d.sedimentError) ? d.sedimentError.toExponential(2) : "—";
+    dom.metricMinDepth.textContent = Number.isFinite(d.minDepth) ? format(d.minDepth, 5) + " m" : "—";
+    dom.metricCfl.textContent = Number.isFinite(d.maxCfl) ? format(d.maxCfl, 3) : "—";
+    dom.timelineCurrent.textContent = format(frame.time, 2) + " s";
+    const frames = store.get().frames; dom.timelineEnd.textContent = frames.length ? format(frames[frames.length - 1].time, 2) + " s" : "0.00 s";
+  }
+
+  function renderAll() {
+    const frame = selectedFrame(); drawProfile(); drawTerrain();
+    drawSeries(dom.hydrographCanvas, "下流端流量", (item) => item.discharge[item.discharge.length - 1], palette("--water"));
+    drawSeries(dom.massCanvas, "最大保存誤差", (item) => Math.max(item.diagnostics.waterError, item.diagnostics.sedimentError), palette("--sediment"), true);
+    renderMetrics(frame);
+  }
+  function scheduleRender() { cancelAnimationFrame(resizeFrame); resizeFrame = requestAnimationFrame(renderAll); }
+
+  function bindEvents() {
+    for (const id of ["caseName", "modelMode", "durationInput", "outputIntervalInput", "cflInput", "seedInput", "manningInput", "porosityInput", "fluidDensityInput", "solidDensityInput"]) {
+      byId(id).addEventListener("change", () => applyEditedCase(collectForm()));
+    }
+    byId("addDamButton").addEventListener("click", () => {
+      const next = collectForm(); const used = new Set(next.structures.map((item) => item.id)); let number = next.structures.length + 1; while (used.has("dam-" + number)) number++;
+      const x0 = next.cells1d[0].x, x1 = next.cells1d[next.cells1d.length - 1].x;
+      next.structures.push({ id: "dam-" + number, type: "impermeable", x: x0 + (x1 - x0) * 0.5, height: 5, dischargeCoefficient: 0.58, slotWidth: 1, barSpacing: 0.5, blockageProbability: 0, remobilizationShear: 0 });
+      applyEditedCase(next, "砂防ダムを追加しました");
+    });
+    byId("validateButton").addEventListener("click", runSelfTests); byId("runButton").addEventListener("click", startRun); byId("pauseButton").addEventListener("click", togglePause); byId("cancelButton").addEventListener("click", cancelRun);
+    byId("exportButton").addEventListener("click", exportCase); byId("importButton").addEventListener("click", () => dom.csvFileInput.click());
+    dom.csvFileInput.addEventListener("change", () => { if (dom.csvFileInput.files && dom.csvFileInput.files[0]) importFile(dom.csvFileInput.files[0]); });
+    byId("importCancelButton").addEventListener("click", closeImport); dom.importApplyButton.addEventListener("click", applyImported);
+    document.querySelectorAll(".view-tab").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
+    document.querySelectorAll(".mobile-tab").forEach((button) => button.addEventListener("click", () => {
+      dom.workspace.dataset.mobileView = button.dataset.mobileView; document.querySelectorAll(".mobile-tab").forEach((item) => item.setAttribute("aria-selected", String(item === button)));
+    }));
+    dom.timelineRange.addEventListener("input", () => { store.set({ selectedFrame: Number(dom.timelineRange.value) }); renderAll(); });
+    window.addEventListener("resize", scheduleRender, { passive: true });
+    window.addEventListener("error", (event) => { transition("error", "画面エラー"); addLog(event.message || "不明な画面エラー", "error"); });
+    window.addEventListener("unhandledrejection", (event) => { transition("error", "非同期エラー"); addLog(event.reason && event.reason.message ? event.reason.message : String(event.reason), "error"); });
+    window.addEventListener("beforeunload", () => { if (bridge) bridge.terminate(); });
+  }
+
+  function boot() {
+    document.documentElement.dataset.js = "enabled"; bindEvents(); syncForm(store.get().rawCase); validateInputs(false); renderAll();
+    try {
+      bridge = new D.WorkerBridge(byId("solver-worker-source").textContent); dom.workerState.textContent = "生成中";
+      bridge.send("init", {}, { onReady: () => { dom.workerState.textContent = "ready / protocol 1"; addLog("Worker protocol 1 を初期化しました", "success"); }, onError: (error) => { dom.workerState.textContent = "error"; addLog(error.message, "error"); } });
+    } catch (error) { dom.workerState.textContent = "利用不可"; addLog(error.message || String(error), "error"); }
+    addLog("参照ケースを読み込みました");
+  }
+
+  boot();
+})();
+  </script>
+</body>
+</html>
