@@ -151,6 +151,9 @@
     .mini-table th, .mini-table td { padding: 6px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
     .mini-table th { color: var(--muted); font-weight: 700; }
     .mini-table input, .mini-table select { min-height: 30px; padding: 4px 6px; }
+    .dam-detail td { padding: 7px 9px 11px; background: rgba(0,0,0,.12); }
+    .dam-detail .form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .dam-detail .field label { font-size: 10px; }
     .workbench { display: grid; grid-template-rows: auto minmax(390px, 1fr) minmax(180px, .46fr); gap: 10px; }
     .view-tabs, .mobile-tabs { display: flex; gap: 4px; padding: 5px; overflow-x: auto; }
     .view-tab, .mobile-tab { white-space: nowrap; background: transparent; border-color: transparent; color: var(--muted); }
@@ -305,6 +308,15 @@
         <section class="panel">
           <header class="panel-header"><h2>砂防ダム</h2><button type="button" class="compact ghost" id="addDamButton">追加</button></header>
           <div class="panel-body flush"><table class="mini-table"><thead><tr><th>種類</th><th>位置 m</th><th>高さ m</th><th></th></tr></thead><tbody id="damTableBody"></tbody></table></div>
+        </section>
+
+        <section class="panel">
+          <header class="panel-header"><h2>2D地形</h2><span class="meta" id="terrainSourceMeta">ローカル生成</span></header>
+          <div class="panel-body form-grid">
+            <div class="field"><label for="gsiLatInput">緯度</label><input id="gsiLatInput" type="number" min="-85.05112878" max="85.05112878" step="0.000001" value="35.681236"></div>
+            <div class="field"><label for="gsiLonInput">経度</label><input id="gsiLonInput" type="number" min="-180" max="180" step="0.000001" value="139.767125"></div>
+            <div class="field full"><button type="button" class="ghost" id="fetchGsiButton">国土地理院DEMを取得</button><p class="help" id="gsiStatus">任意のオンライン補助。失敗時は現在の地形を保持します。</p></div>
+          </div>
         </section>
       </aside>
 
@@ -536,9 +548,12 @@ function validateCase(c) {
     range(structure.barSpacing, "barSpacing", 0, 1000);
     range(structure.blockageProbability, "blockageProbability", 0, 1);
     range(structure.remobilizationShear, "remobilizationShear", 0, 1e9);
+    range(structure.sedimentCapacity, "sedimentCapacity", 0, 1e12);
   }
   if (!Array.isArray(c.observers)) throw new Error("observersが配列ではありません");
   for (const observer of c.observers) range(observer.x, "observer.x", c.cells1d[0].x, c.cells1d[c.cells1d.length - 1].x);
+  if (!c.boundaries || !["inflow", "closed"].includes(c.boundaries.left) || !["open", "closed"].includes(c.boundaries.right)) throw new Error("境界条件が不正です");
+  if (c.solver.model === "coupled1d2d" && (!c.grid2d || !c.grid2d.enabled)) throw new Error("結合モデルには有効な2D格子が必要です");
   if (c.grid2d && c.grid2d.enabled) {
     integer(c.grid2d.nx, "grid2d.nx", 2, 4096);
     integer(c.grid2d.ny, "grid2d.ny", 2, 4096);
@@ -644,6 +659,7 @@ function createState1D(c) {
   const q = new Float64Array(n);
   const hc = new Float64Array(n * kCount);
   const bedFraction = new Float64Array(n * kCount);
+  const activeFraction = new Float64Array(n * kCount);
   for (let i = 0; i < n; i++) {
     const cell = c.cells1d[i];
     x[i] = cell.x;
@@ -652,7 +668,10 @@ function createState1D(c) {
     bed[i] = cell.bed;
     h[i] = cell.initialDepth;
     q[i] = 0;
-    for (let k = 0; k < kCount; k++) bedFraction[i * kCount + k] = c.grains[k].fraction;
+    for (let k = 0; k < kCount; k++) {
+      bedFraction[i * kCount + k] = c.grains[k].fraction;
+      activeFraction[i * kCount + k] = c.grains[k].fraction;
+    }
   }
   for (let i = 0; i < n; i++) {
     const left = i === 0 ? x[0] - 0.5 * (x[1] - x[0]) : 0.5 * (x[i - 1] + x[i]);
@@ -670,14 +689,14 @@ function createState1D(c) {
     }
     return Object.assign({}, structure, { face, blockage: 0, captured: new Float64Array(kCount) });
   });
-  return { n, kCount, x, dx, width, fixedBed, bed, h, q, hc, bedFraction, structures, time: 0, steps: 0 };
+  return { n, kCount, x, dx, width, fixedBed, bed, h, q, hc, bedFraction, activeFraction, structures, time: 0, steps: 0 };
 }
 
 function cloneState(state) {
   return {
     n: state.n, kCount: state.kCount,
     x: state.x, dx: state.dx, width: state.width, fixedBed: state.fixedBed,
-    bed: state.bed.slice(), h: state.h.slice(), q: state.q.slice(), hc: state.hc.slice(), bedFraction: state.bedFraction.slice(),
+    bed: state.bed.slice(), h: state.h.slice(), q: state.q.slice(), hc: state.hc.slice(), bedFraction: state.bedFraction.slice(), activeFraction: state.activeFraction.slice(),
     structures: state.structures.map((item) => Object.assign({}, item, { captured: item.captured.slice() })),
     time: state.time, steps: state.steps,
   };
@@ -715,39 +734,60 @@ function limitByStructure(flux, sedimentFlux, structure, left, right, c, dt, fac
   const upstream = sign > 0 ? left : right;
   const downstream = sign > 0 ? right : left;
   const crest = Math.max(left.bed, right.bed) + structure.height;
-  const head = Math.max(0, upstream.eta - Math.max(crest, downstream.eta));
+  const overtoppingHead = Math.max(0, upstream.eta - Math.max(crest, downstream.eta));
   const coefficient = structure.dischargeCoefficient;
-  let allowed = coefficient * Math.sqrt(2 * G) * Math.pow(head, 1.5);
+  const weirFlux = coefficient * Math.sqrt(2 * G) * Math.pow(overtoppingHead, 1.5);
+  let allowed = weirFlux;
   let opening = 1;
+  let shear = c.material.fluidDensity * G * upstream.h * Math.abs(upstream.u);
   if (structure.type === "slit") {
     const channelWidth = Math.max(1e-9, 0.5 * (left.width + right.width));
     opening = Math.min(1, structure.slotWidth / channelWidth);
-    allowed *= opening;
+    const pressureHead = Math.max(0, upstream.eta - downstream.eta);
+    const apertureDepth = Math.min(structure.height, upstream.h);
+    const orificeFlux = coefficient * opening * apertureDepth * Math.sqrt(2 * G * pressureHead);
+    const contractionLoss = 1 / Math.sqrt(1 + Math.pow(Math.max(0, 1 / Math.max(opening, 1e-6) - 1), 2));
+    allowed = weirFlux + orificeFlux * contractionLoss;
   } else if (structure.type === "grid") {
     const largest = c.grains[c.grains.length - 1].diameter;
     const geometricOpen = Math.min(1, structure.barSpacing / Math.max(structure.barSpacing + largest, 1e-9));
     if (random() < structure.blockageProbability * dt * Math.min(1, Math.abs(flux[0]))) structure.blockage = Math.min(0.98, structure.blockage + 0.02);
-    const shear = c.material.fluidDensity * G * upstream.h * Math.abs(upstream.u);
     if (shear > structure.remobilizationShear) structure.blockage = Math.max(0, structure.blockage - 0.01 * dt);
     opening = geometricOpen * (1 - structure.blockage);
-    allowed *= opening;
+    const throughGrid = coefficient * opening * upstream.h * Math.sqrt(2 * G * Math.max(0, upstream.eta - downstream.eta));
+    allowed = weirFlux + throughGrid;
   }
   const magnitude = Math.min(Math.abs(flux[0]), allowed);
   const ratio = Math.abs(flux[0]) > 1e-14 ? magnitude / Math.abs(flux[0]) : 0;
   const resultFlux = [sign * magnitude, flux[1] * ratio];
   const resultSediment = sedimentFlux.slice();
   const capturedRates = new Float64Array(resultSediment.length);
+  const beforeFluxes = sedimentFlux.slice();
+  let totalCandidateRate = 0;
   for (let k = 0; k < resultSediment.length; k++) {
     let pass = ratio;
     if (structure.type === "grid") {
       const sizePass = Math.min(1, structure.barSpacing / Math.max(c.grains[k].diameter, 1e-12));
       pass *= sizePass * opening;
     }
-    const before = resultSediment[k];
     resultSediment[k] *= pass;
-    const capturedRate = Math.max(0, Math.abs(before) - Math.abs(resultSediment[k]));
-    capturedRates[k] = capturedRate;
-    structure.captured[k] += capturedRate * faceWidth * dt;
+    capturedRates[k] = Math.max(0, Math.abs(beforeFluxes[k]) - Math.abs(resultSediment[k]));
+    totalCandidateRate += capturedRates[k];
+  }
+  const stored = structure.captured.reduce((sum, value) => sum + value, 0);
+  const remaining = Math.max(0, structure.sedimentCapacity - stored);
+  const captureScale = totalCandidateRate > 0 ? Math.min(1, remaining / Math.max(totalCandidateRate * faceWidth * dt, 1e-30)) : 0;
+  for (let k = 0; k < resultSediment.length; k++) {
+    capturedRates[k] *= captureScale;
+    structure.captured[k] += capturedRates[k] * faceWidth * dt;
+  }
+  if (structure.type === "grid" && shear > structure.remobilizationShear && faceWidth * dt > 0) {
+    const releaseFraction = Math.min(0.25, 0.02 * dt * (shear / Math.max(structure.remobilizationShear, 1) - 1));
+    for (let k = 0; k < resultSediment.length; k++) {
+      const releaseVolume = structure.captured[k] * releaseFraction;
+      structure.captured[k] -= releaseVolume;
+      capturedRates[k] -= releaseVolume / (faceWidth * dt);
+    }
   }
   return { flux: resultFlux, sedimentFlux: resultSediment, capturedRates };
 }
@@ -776,13 +816,16 @@ function eulerStage(input, c, dt, random) {
   for (let face = 0; face <= n; face++) {
     let left, right;
     if (face === 0) {
-      const slope = Math.max(1e-8, Math.abs((input.bed[1] - input.bed[0]) / (input.x[1] - input.x[0])));
-      const width = input.width[0];
-      const qPerWidth = inflow.discharge / width;
-      const normalDepth = qPerWidth > 0 ? Math.pow(c.material.manning * qPerWidth / Math.sqrt(slope), 3 / 5) : input.h[0];
-      const h = Math.max(dry, normalDepth);
-      left = { h, u: qPerWidth / h, eta: h + input.bed[0], bed: input.bed[0], width, concentrations: inflow.concentrations };
       right = cellFaceState(input, primitive, etaSlope, uSlope, concentrationSlope, 0, -1, dry, c.material.maxConcentration);
+      if (c.boundaries.left === "closed") left = Object.assign({}, right, { u: -right.u, concentrations: right.concentrations.slice() });
+      else {
+        const slope = Math.max(1e-8, Math.abs((input.bed[1] - input.bed[0]) / (input.x[1] - input.x[0])));
+        const width = input.width[0];
+        const qPerWidth = inflow.discharge / width;
+        const normalDepth = qPerWidth > 0 ? Math.pow(c.material.manning * qPerWidth / Math.sqrt(slope), 3 / 5) : input.h[0];
+        const h = Math.max(dry, normalDepth);
+        left = { h, u: qPerWidth / h, eta: h + input.bed[0], bed: input.bed[0], width, concentrations: inflow.concentrations };
+      }
     } else if (face === n) {
       left = cellFaceState(input, primitive, etaSlope, uSlope, concentrationSlope, n - 1, 1, dry, c.material.maxConcentration);
       if (c.boundaries.right === "closed") right = Object.assign({}, left, { u: -left.u, concentrations: left.concentrations.slice() });
@@ -847,13 +890,15 @@ function eulerStage(input, c, dt, random) {
     state.h[i] = input.h[i] + dt * dh[i];
     state.q[i] = input.q[i] + dt * dq[i];
     if (state.h[i] < -1e-10 || !Number.isFinite(state.h[i]) || !Number.isFinite(state.q[i])) throw new Error("水深または運動量が非物理値になりました");
-    if (state.h[i] < dry) { state.h[i] = 0; state.q[i] = 0; }
+    if (state.h[i] < 0) state.h[i] = 0;
+    if (state.h[i] < dry) state.q[i] = 0;
     for (let k = 0; k < kCount; k++) {
       const index = i * kCount + k;
       state.hc[index] = input.hc[index] + dt * dhc[index];
       if (state.hc[index] < -1e-10 || !Number.isFinite(state.hc[index])) throw new Error("移動土砂量が非物理値になりました");
       if (state.hc[index] < 0) state.hc[index] = 0;
     }
+    projectConcentrationToBed1D(state, i, c);
     enforceConcentration(state, i, c.material.maxConcentration);
     applyFrictionAndMorphodynamics(state, i, c, dt);
   }
@@ -884,7 +929,53 @@ function enforceConcentration(state, i, maxConcentration) {
   let solids = 0;
   for (let k = 0; k < state.kCount; k++) solids += state.hc[offset + k];
   const allowed = state.h[i] * maxConcentration;
-  if (solids > allowed + Math.max(1e-12, Math.abs(allowed) * 1e-10)) throw new Error("移動固相濃度が物理上限を超えました");
+  if (solids > allowed + Math.max(1e-12, Math.abs(allowed) * 1e-10)) {
+    throw new Error("移動固相濃度が物理上限を超えました: cell=" + i + ", t=" + state.time + ", h=" + state.h[i] + ", hc=" + solids + ", C=" + solids / Math.max(state.h[i], 1e-300));
+  }
+}
+
+function projectConcentrationToBed1D(state, i, c) {
+  const offset = i * state.kCount, oldH = state.h[i];
+  let solids = 0;
+  for (let k = 0; k < state.kCount; k++) solids += state.hc[offset + k];
+  const excess = solids - c.material.maxConcentration * oldH;
+  if (excess <= Math.max(1e-14, Math.abs(oldH) * 1e-13)) return 0;
+  const deposit = Math.min(solids, excess / Math.max(1 - c.material.maxConcentration, 1e-12));
+  const porosityFactor = 1 - c.material.porosity;
+  const oldBedSolid = Math.max(0, state.bed[i] - state.fixedBed[i]) * porosityFactor;
+  const oldActiveSolid = Math.min(oldBedSolid, c.material.activeLayerThickness * porosityFactor);
+  const depositedByGrain = new Float64Array(state.kCount);
+  const nextBedByGrain = new Float64Array(state.kCount);
+  for (let k = 0; k < state.kCount; k++) {
+    depositedByGrain[k] = solids > 0 ? deposit * state.hc[offset + k] / solids : 0;
+    state.hc[offset + k] -= depositedByGrain[k];
+    nextBedByGrain[k] = oldBedSolid * state.bedFraction[offset + k] + depositedByGrain[k];
+  }
+  const newBedSolid = oldBedSolid + deposit;
+  const newActiveSolid = Math.min(newBedSolid, c.material.activeLayerThickness * porosityFactor);
+  let activeTotal = 0;
+  const activeByGrain = new Float64Array(state.kCount);
+  for (let k = 0; k < state.kCount; k++) {
+    activeByGrain[k] = oldActiveSolid * state.activeFraction[offset + k] + depositedByGrain[k];
+    activeTotal += activeByGrain[k];
+  }
+  if (activeTotal > newActiveSolid && activeTotal > 0) {
+    const scale = newActiveSolid / activeTotal;
+    for (let k = 0; k < state.kCount; k++) activeByGrain[k] *= scale;
+    activeTotal = newActiveSolid;
+  } else if (activeTotal < newActiveSolid) {
+    const refill = newActiveSolid - activeTotal;
+    for (let k = 0; k < state.kCount; k++) activeByGrain[k] += refill * nextBedByGrain[k] / Math.max(newBedSolid, 1e-30);
+    activeTotal = newActiveSolid;
+  }
+  for (let k = 0; k < state.kCount; k++) {
+    state.bedFraction[offset + k] = nextBedByGrain[k] / Math.max(newBedSolid, 1e-30);
+    state.activeFraction[offset + k] = activeTotal > 0 ? activeByGrain[k] / activeTotal : state.bedFraction[offset + k];
+  }
+  state.h[i] = Math.max(0, oldH - deposit);
+  if (oldH > c.solver.dryDepth) state.q[i] *= state.h[i] / oldH;
+  state.bed[i] = state.fixedBed[i] + newBedSolid / porosityFactor;
+  return deposit;
 }
 
 function applyFrictionAndMorphodynamics(state, i, c, dt) {
@@ -914,30 +1005,62 @@ function applyFrictionAndMorphodynamics(state, i, c, dt) {
   const concentrationCapacity = Math.max(0, (c.material.maxConcentration * h - movingSolid) / Math.max(1 - c.material.maxConcentration, 1e-12));
   erosion = Math.min(erosion, deposition + concentrationCapacity);
   const netByGrain = new Float64Array(state.kCount);
+  const erosionByGrain = new Float64Array(state.kCount);
+  const depositionByGrain = new Float64Array(state.kCount);
+  const activeSolidBefore = Math.min(availableBedSolid, c.material.activeLayerThickness * (1 - c.material.porosity));
+  let actualErosion = 0;
   for (let k = 0; k < state.kCount; k++) {
-    const erosionK = erosion * state.bedFraction[offset + k];
+    const erosionK = Math.min(erosion * state.activeFraction[offset + k], availableBedSolid * state.bedFraction[offset + k]);
+    erosionByGrain[k] = erosionK;
+    actualErosion += erosionK;
+  }
+  erosion = actualErosion;
+  deposition = Math.min(deposition, movingSolid + erosion);
+  for (let k = 0; k < state.kCount; k++) {
     const movingFraction = movingSolid > 0 ? state.hc[offset + k] / movingSolid : 0;
     const depositionK = deposition * movingFraction;
-    netByGrain[k] = erosionK - depositionK;
+    depositionByGrain[k] = depositionK;
+    netByGrain[k] = erosionByGrain[k] - depositionK;
     state.hc[offset + k] += netByGrain[k];
   }
   const netSolid = erosion - deposition;
-  const updatedBedSolid = availableBedSolid - netSolid;
+  const expectedBedSolid = availableBedSolid - netSolid;
+  const nextBedByGrain = new Float64Array(state.kCount);
+  let updatedBedSolid = 0;
+  for (let k = 0; k < state.kCount; k++) {
+    const previous = availableBedSolid * state.bedFraction[offset + k];
+    const next = previous - netByGrain[k];
+    if (next < -1e-12) throw new Error("粒径別河床量が負になりました");
+    nextBedByGrain[k] = Math.max(0, next); updatedBedSolid += nextBedByGrain[k];
+  }
+  const bedResidual = Math.abs(updatedBedSolid - expectedBedSolid);
+  if (bedResidual > Math.max(1e-10, Math.abs(expectedBedSolid) * 1e-8)) throw new Error("河床粒径別保存量が全量と不整合です: " + bedResidual);
   if (updatedBedSolid > 1e-14) {
-    let fractionTotal = 0;
+    for (let k = 0; k < state.kCount; k++) state.bedFraction[offset + k] = nextBedByGrain[k] / updatedBedSolid;
+    const activeTarget = Math.min(updatedBedSolid, c.material.activeLayerThickness * (1 - c.material.porosity));
+    const activeComponents = new Float64Array(state.kCount);
+    let activeAfterExchange = 0;
     for (let k = 0; k < state.kCount; k++) {
-      const previousBedByGrain = availableBedSolid * state.bedFraction[offset + k];
-      const nextBedByGrain = previousBedByGrain - netByGrain[k];
-      if (nextBedByGrain < -1e-12) throw new Error("粒径別河床量が負になりました");
-      state.bedFraction[offset + k] = Math.max(0, nextBedByGrain) / updatedBedSolid;
-      fractionTotal += state.bedFraction[offset + k];
+      activeComponents[k] = Math.max(0, activeSolidBefore * state.activeFraction[offset + k] - erosionByGrain[k] + depositionByGrain[k]);
+      activeAfterExchange += activeComponents[k];
     }
-    if (Math.abs(fractionTotal - 1) > 1e-10) throw new Error("河床粒径割合の保存に失敗しました");
+    if (activeAfterExchange < activeTarget) {
+      const refill = activeTarget - activeAfterExchange;
+      for (let k = 0; k < state.kCount; k++) activeComponents[k] += refill * state.bedFraction[offset + k];
+      activeAfterExchange = activeTarget;
+    }
+    if (activeAfterExchange > activeTarget && activeAfterExchange > 0) {
+      const scale = activeTarget / activeAfterExchange;
+      for (let k = 0; k < state.kCount; k++) activeComponents[k] *= scale;
+      activeAfterExchange = activeTarget;
+    }
+    for (let k = 0; k < state.kCount; k++) state.activeFraction[offset + k] = activeAfterExchange > 0 ? activeComponents[k] / activeAfterExchange : state.bedFraction[offset + k];
   }
   state.h[i] += netSolid;
-  state.bed[i] -= netSolid / (1 - c.material.porosity);
+  state.bed[i] = state.fixedBed[i] + updatedBedSolid / (1 - c.material.porosity);
   if (state.bed[i] < state.fixedBed[i] - 1e-12) throw new Error("侵食が固定床を下回りました");
   if (state.bed[i] < state.fixedBed[i]) state.bed[i] = state.fixedBed[i];
+  projectConcentrationToBed1D(state, i, c);
   enforceConcentration(state, i, c.material.maxConcentration);
 }
 
@@ -950,11 +1073,17 @@ function averageStates(original, twice, c) {
     const originalBedSolid = Math.max(0, original.bed[i] - original.fixedBed[i]) * (1 - c.material.porosity);
     const twiceBedSolid = Math.max(0, twice.bed[i] - twice.fixedBed[i]) * (1 - c.material.porosity);
     const resultBedSolid = 0.5 * (originalBedSolid + twiceBedSolid);
+    const activeLimit = c.material.activeLayerThickness * (1 - c.material.porosity);
+    const originalActiveSolid = Math.min(originalBedSolid, activeLimit);
+    const twiceActiveSolid = Math.min(twiceBedSolid, activeLimit);
+    const resultActiveSolid = 0.5 * (originalActiveSolid + twiceActiveSolid);
     for (let k = 0; k < result.kCount; k++) {
       const index = i * result.kCount + k;
       result.hc[index] = 0.5 * (original.hc[index] + twice.hc[index]);
       const component = 0.5 * (originalBedSolid * original.bedFraction[index] + twiceBedSolid * twice.bedFraction[index]);
       result.bedFraction[index] = resultBedSolid > 1e-14 ? component / resultBedSolid : original.bedFraction[index];
+      const activeComponent = 0.5 * (originalActiveSolid * original.activeFraction[index] + twiceActiveSolid * twice.activeFraction[index]);
+      result.activeFraction[index] = resultActiveSolid > 1e-14 ? activeComponent / resultActiveSolid : result.bedFraction[index];
     }
     enforceConcentration(result, i, c.material.maxConcentration);
   }
@@ -998,6 +1127,7 @@ function computeDt(state, c) {
 
 function inventory(state, c) {
   let water = 0;
+  let momentum = 0;
   const suspended = new Float64Array(state.kCount);
   const bedSolid = new Float64Array(state.kCount);
   const captured = new Float64Array(state.kCount);
@@ -1014,11 +1144,219 @@ function inventory(state, c) {
       bedSolid[k] += Math.max(0, state.bed[i] - state.fixedBed[i]) * (1 - c.material.porosity) * state.bedFraction[index] * volumeFactor;
     }
     water += Math.max(0, state.h[i] - cellSolid) * volumeFactor;
+    momentum += state.q[i] * volumeFactor;
     minDepth = Math.min(minDepth, state.h[i]);
     maxConcentration = Math.max(maxConcentration, state.h[i] > c.solver.dryDepth ? cellSolid / state.h[i] : 0);
   }
   for (const structure of state.structures) for (let k = 0; k < state.kCount; k++) captured[k] += structure.captured[k];
-  return { water, suspended, bedSolid, captured, minDepth, maxConcentration };
+  return { water, momentum, suspended, bedSolid, captured, minDepth, maxConcentration };
+}
+
+function createState2D(c) {
+  const nx = c.grid2d.nx, ny = c.grid2d.ny, n = nx * ny, kCount = c.grains.length;
+  const bed = Float64Array.from(c.grid2d.elevation);
+  return {
+    nx, ny, n, kCount, dx: c.grid2d.dx, dy: c.grid2d.dy, bed, fixedBed: bed.slice(),
+    h: new Float64Array(n), qx: new Float64Array(n), qy: new Float64Array(n), hc: new Float64Array(n * kCount), bedByGrain: new Float64Array(n * kCount),
+    time: 0, steps: 0,
+  };
+}
+
+function cloneState2D(state) {
+  return {
+    nx: state.nx, ny: state.ny, n: state.n, kCount: state.kCount, dx: state.dx, dy: state.dy,
+    bed: state.bed.slice(), fixedBed: state.fixedBed, h: state.h.slice(), qx: state.qx.slice(), qy: state.qy.slice(), hc: state.hc.slice(), bedByGrain: state.bedByGrain.slice(),
+    time: state.time, steps: state.steps,
+  };
+}
+
+function flux2D(state, a, b, axis, c) {
+  const dry = c.solver.dryDepth;
+  const hA0 = state.h[a], hB0 = state.h[b];
+  const zStar = Math.max(state.bed[a], state.bed[b]);
+  const hA = Math.max(0, state.bed[a] + hA0 - zStar), hB = Math.max(0, state.bed[b] + hB0 - zStar);
+  const unA = hA0 > dry ? (axis === 0 ? state.qx[a] : state.qy[a]) / hA0 : 0;
+  const unB = hB0 > dry ? (axis === 0 ? state.qx[b] : state.qy[b]) / hB0 : 0;
+  const utA = hA0 > dry ? (axis === 0 ? state.qy[a] : state.qx[a]) / hA0 : 0;
+  const utB = hB0 > dry ? (axis === 0 ? state.qy[b] : state.qx[b]) / hB0 : 0;
+  const qnA = hA * unA, qnB = hB * unB;
+  const qtA = hA * utA, qtB = hB * utB;
+  const speed = Math.max(Math.abs(unA) + Math.sqrt(G * hA), Math.abs(unB) + Math.sqrt(G * hB));
+  const mass = 0.5 * (qnA + qnB) - 0.5 * speed * (hB - hA);
+  const normal = 0.5 * (qnA * unA + 0.5 * G * hA * hA + qnB * unB + 0.5 * G * hB * hB) - 0.5 * speed * (qnB - qnA);
+  const tangent = 0.5 * (qnA * utA + qnB * utB) - 0.5 * speed * (qtB - qtA);
+  const sediment = new Float64Array(state.kCount);
+  const up = mass >= 0 ? a : b;
+  const upH = state.h[up];
+  for (let k = 0; k < state.kCount; k++) sediment[k] = mass * (upH > dry ? state.hc[up * state.kCount + k] / upH : 0);
+  return {
+    mass, normal, tangent, sediment,
+    pressureA: 0.5 * G * (hA0 * hA0 - hA * hA), pressureB: 0.5 * G * (hB0 * hB0 - hB * hB),
+  };
+}
+
+function projectConcentrationToBed2D(state, i, c) {
+  const offset = i * state.kCount, oldH = state.h[i];
+  let solids = 0;
+  for (let k = 0; k < state.kCount; k++) solids += state.hc[offset + k];
+  const excess = solids - c.material.maxConcentration * oldH;
+  if (excess <= Math.max(1e-14, Math.abs(oldH) * 1e-13)) return 0;
+  const deposit = Math.min(solids, excess / Math.max(1 - c.material.maxConcentration, 1e-12));
+  let bedTotal = 0;
+  for (let k = 0; k < state.kCount; k++) {
+    const share = solids > 0 ? deposit * state.hc[offset + k] / solids : 0;
+    state.hc[offset + k] -= share;
+    state.bedByGrain[offset + k] += share;
+    bedTotal += state.bedByGrain[offset + k];
+  }
+  state.h[i] = Math.max(0, oldH - deposit);
+  if (oldH > c.solver.dryDepth) {
+    const scale = state.h[i] / oldH;
+    state.qx[i] *= scale; state.qy[i] *= scale;
+  }
+  state.bed[i] = state.fixedBed[i] + bedTotal / (1 - c.material.porosity);
+  return deposit;
+}
+
+function eulerStage2D(input, c, dt) {
+  const state = cloneState2D(input);
+  const dh = new Float64Array(state.n), dqx = new Float64Array(state.n), dqy = new Float64Array(state.n), dhc = new Float64Array(state.n * state.kCount);
+  const applyFace = (a, b, axis) => {
+    const flux = flux2D(input, a, b, axis, c);
+    const inverseLength = axis === 0 ? 1 / state.dx : 1 / state.dy;
+    dh[a] -= flux.mass * inverseLength; dh[b] += flux.mass * inverseLength;
+    if (axis === 0) {
+      dqx[a] -= (flux.normal + flux.pressureA) * inverseLength; dqx[b] += (flux.normal + flux.pressureB) * inverseLength;
+      dqy[a] -= flux.tangent * inverseLength; dqy[b] += flux.tangent * inverseLength;
+    } else {
+      dqy[a] -= (flux.normal + flux.pressureA) * inverseLength; dqy[b] += (flux.normal + flux.pressureB) * inverseLength;
+      dqx[a] -= flux.tangent * inverseLength; dqx[b] += flux.tangent * inverseLength;
+    }
+    for (let k = 0; k < state.kCount; k++) { dhc[a * state.kCount + k] -= flux.sediment[k] * inverseLength; dhc[b * state.kCount + k] += flux.sediment[k] * inverseLength; }
+  };
+  for (let iy = 0; iy < state.ny; iy++) for (let ix = 1; ix < state.nx; ix++) applyFace(iy * state.nx + ix - 1, iy * state.nx + ix, 0);
+  for (let iy = 1; iy < state.ny; iy++) for (let ix = 0; ix < state.nx; ix++) applyFace((iy - 1) * state.nx + ix, iy * state.nx + ix, 1);
+  for (let i = 0; i < state.n; i++) {
+    state.h[i] = input.h[i] + dt * dh[i];
+    state.qx[i] = input.qx[i] + dt * dqx[i];
+    state.qy[i] = input.qy[i] + dt * dqy[i];
+    if (state.h[i] < -1e-10 || !Number.isFinite(state.h[i]) || !Number.isFinite(state.qx[i]) || !Number.isFinite(state.qy[i])) throw new Error("2D stateが非物理値になりました");
+    if (state.h[i] < 0) state.h[i] = 0;
+    if (state.h[i] < c.solver.dryDepth) { state.qx[i] = 0; state.qy[i] = 0; }
+    let solids = 0;
+    for (let k = 0; k < state.kCount; k++) {
+      const index = i * state.kCount + k;
+      state.hc[index] = input.hc[index] + dt * dhc[index];
+      if (state.hc[index] < -1e-10 || !Number.isFinite(state.hc[index])) throw new Error("2D移動土砂が非物理値になりました");
+      if (state.hc[index] < 0) state.hc[index] = 0;
+      solids += state.hc[index];
+    }
+    projectConcentrationToBed2D(state, i, c);
+    solids = 0;
+    for (let k = 0; k < state.kCount; k++) solids += state.hc[i * state.kCount + k];
+    if (solids > state.h[i] * c.material.maxConcentration + Math.max(1e-12, state.h[i] * c.material.maxConcentration * 1e-10)) throw new Error("2D保存的濃度射影に失敗しました");
+    if (state.h[i] > c.solver.dryDepth) {
+      const speed = Math.hypot(state.qx[i], state.qy[i]) / state.h[i];
+      const factor = 1 + dt * G * c.material.manning * c.material.manning * speed / Math.max(Math.pow(state.h[i], 4 / 3), 1e-18);
+      state.qx[i] /= factor; state.qy[i] /= factor;
+      let movingSolid = 0;
+      for (let k = 0; k < state.kCount; k++) movingSolid += state.hc[i * state.kCount + k];
+      const capacity = Math.max(0, (c.material.maxConcentration * state.h[i] - movingSolid) / Math.max(1 - c.material.maxConcentration, 1e-12));
+      let remainingCapacity = capacity, netSolid = 0, bedTotal = 0;
+      for (let k = 0; k < state.kCount; k++) {
+        const index = i * state.kCount + k;
+        const concentration = state.h[i] > 0 ? state.hc[index] / state.h[i] : 0;
+        let deposition = c.material.depositionCoefficient * c.grains[k].settlingVelocity * concentration * dt;
+        if (speed < c.material.yieldDepositionVelocity) deposition += c.material.yieldDepositionCoefficient * concentration * dt;
+        deposition = Math.min(deposition, state.hc[index]);
+        const erosion = Math.min(state.bedByGrain[index], remainingCapacity, c.material.erosionCoefficient * speed * dt / state.kCount);
+        remainingCapacity -= erosion;
+        const exchange = erosion - deposition;
+        state.hc[index] += exchange; state.bedByGrain[index] -= exchange; netSolid += exchange; bedTotal += state.bedByGrain[index];
+      }
+      state.h[i] += netSolid;
+      state.bed[i] = state.fixedBed[i] + bedTotal / (1 - c.material.porosity);
+    }
+  }
+  state.time = input.time + dt; state.steps = input.steps + 1;
+  return state;
+}
+
+function averageState2D(original, twice, c) {
+  const result = cloneState2D(original);
+  for (let i = 0; i < result.n; i++) {
+    result.h[i] = 0.5 * (original.h[i] + twice.h[i]); result.qx[i] = 0.5 * (original.qx[i] + twice.qx[i]); result.qy[i] = 0.5 * (original.qy[i] + twice.qy[i]);
+    let bedTotal = 0;
+    for (let k = 0; k < result.kCount; k++) {
+      const index = i * result.kCount + k;
+      result.hc[index] = 0.5 * (original.hc[index] + twice.hc[index]);
+      result.bedByGrain[index] = 0.5 * (original.bedByGrain[index] + twice.bedByGrain[index]); bedTotal += result.bedByGrain[index];
+    }
+    result.bed[i] = result.fixedBed[i] + bedTotal / (1 - c.material.porosity);
+  }
+  result.time = original.time + 0.5 * (twice.time - original.time); result.steps = original.steps + 1;
+  return result;
+}
+
+function computeDt2D(state, c) {
+  let dt = c.solver.maxDt, actualCfl = 0;
+  for (let i = 0; i < state.n; i++) {
+    const h = state.h[i], wave = Math.sqrt(G * Math.max(0, h));
+    const ux = h > c.solver.dryDepth ? Math.abs(state.qx[i] / h) : 0, uy = h > c.solver.dryDepth ? Math.abs(state.qy[i] / h) : 0;
+    if (ux + wave > 1e-12) dt = Math.min(dt, c.solver.cfl * state.dx / (ux + wave));
+    if (uy + wave > 1e-12) dt = Math.min(dt, c.solver.cfl * state.dy / (uy + wave));
+  }
+  dt = Math.min(dt, c.solver.duration - state.time);
+  for (let i = 0; i < state.n; i++) {
+    const h = state.h[i], wave = Math.sqrt(G * Math.max(0, h));
+    const ux = h > c.solver.dryDepth ? Math.abs(state.qx[i] / h) : 0, uy = h > c.solver.dryDepth ? Math.abs(state.qy[i] / h) : 0;
+    actualCfl = Math.max(actualCfl, (ux + wave) * dt / state.dx, (uy + wave) * dt / state.dy);
+  }
+  return { dt, actualCfl };
+}
+
+function applyCouplingFlux(oneD, twoD, c, dt) {
+  const i = oneD.n - 1;
+  const j = Math.floor(twoD.ny / 2) * twoD.nx;
+  const h1 = oneD.h[i], h2 = twoD.h[j];
+  const u1 = h1 > c.solver.dryDepth ? oneD.q[i] / h1 : 0;
+  const u2 = h2 > c.solver.dryDepth ? twoD.qx[j] / h2 : 0;
+  const zStar = Math.max(oneD.bed[i], twoD.bed[j]);
+  const flux = hllcFlux(Math.max(0, oneD.bed[i] + h1 - zStar), u1, Math.max(0, twoD.bed[j] + h2 - zStar), u2, G, c.solver.dryDepth);
+  const faceWidth = Math.min(oneD.width[i], twoD.dy);
+  let mixtureRate = flux[0] * faceWidth;
+  const availableRate = mixtureRate >= 0 ? h1 * oneD.width[i] * oneD.dx[i] / dt : h2 * twoD.dx * twoD.dy / dt;
+  if (Math.abs(mixtureRate) > availableRate) mixtureRate = Math.sign(mixtureRate) * availableRate;
+  const volume = mixtureRate * dt;
+  const sourceScale1 = 1 / (oneD.width[i] * oneD.dx[i]), sourceScale2 = 1 / (twoD.dx * twoD.dy);
+  oneD.h[i] -= volume * sourceScale1; twoD.h[j] += volume * sourceScale2;
+  const momentumRate = Math.abs(flux[0] * faceWidth) > 1e-14 ? flux[1] * faceWidth * Math.abs(mixtureRate / (flux[0] * faceWidth)) : 0;
+  oneD.q[i] -= momentumRate * dt * sourceScale1; twoD.qx[j] += momentumRate * dt * sourceScale2;
+  const upOneD = mixtureRate >= 0;
+  const solidVolumes = new Float64Array(oneD.kCount);
+  for (let k = 0; k < oneD.kCount; k++) {
+    const concentration = upOneD ? (h1 > c.solver.dryDepth ? oneD.hc[i * oneD.kCount + k] / h1 : 0) : (h2 > c.solver.dryDepth ? twoD.hc[j * twoD.kCount + k] / h2 : 0);
+    const solidVolume = volume * concentration;
+    solidVolumes[k] = solidVolume;
+    oneD.hc[i * oneD.kCount + k] -= solidVolume * sourceScale1;
+    twoD.hc[j * twoD.kCount + k] += solidVolume * sourceScale2;
+  }
+  if (oneD.h[i] < -1e-10 || twoD.h[j] < -1e-10) throw new Error("1D–2D界面で負水深になりました");
+  oneD.h[i] = Math.max(0, oneD.h[i]); twoD.h[j] = Math.max(0, twoD.h[j]);
+  return { mixtureVolume: volume, solidVolumes: Array.from(solidVolumes), momentumImpulse: momentumRate * dt };
+}
+
+function inventory2D(state, c) {
+  let water = 0, momentum = 0, minDepth = Infinity, maxConcentration = 0;
+  const suspended = new Float64Array(state.kCount), bedSolid = new Float64Array(state.kCount), captured = new Float64Array(state.kCount);
+  const area = state.dx * state.dy;
+  for (let i = 0; i < state.n; i++) {
+    let solids = 0;
+    for (let k = 0; k < state.kCount; k++) { const index = i * state.kCount + k, value = state.hc[index]; suspended[k] += value * area; bedSolid[k] += state.bedByGrain[index] * area; solids += value; }
+    water += Math.max(0, state.h[i] - solids) * area; momentum += state.qx[i] * area;
+    minDepth = Math.min(minDepth, state.h[i]); maxConcentration = Math.max(maxConcentration, state.h[i] > c.solver.dryDepth ? solids / state.h[i] : 0);
+  }
+  return { water, momentum, suspended, bedSolid, captured, minDepth, maxConcentration };
 }
 
 function makeFrame(state, c, diagnostics) {
@@ -1040,7 +1378,7 @@ function makeFrame(state, c, diagnostics) {
 }
 
 function transferFrame(requestId, frame) {
-  post("frame", requestId, {
+  const payload = {
     time: frame.diagnostics.time,
     steps: frame.diagnostics.steps,
     diagnostics: frame.diagnostics,
@@ -1053,7 +1391,29 @@ function transferFrame(requestId, frame) {
       discharge: frame.discharge.buffer,
       concentration: frame.concentration.buffer,
     },
-  }, [frame.x.buffer, frame.bed.buffer, frame.fixedBed.buffer, frame.surface.buffer, frame.discharge.buffer, frame.concentration.buffer]);
+  };
+  const transfers = [frame.x.buffer, frame.bed.buffer, frame.fixedBed.buffer, frame.surface.buffer, frame.discharge.buffer, frame.concentration.buffer];
+  if (frame.grid) {
+    payload.lengths.grid = frame.grid.depth.length;
+    payload.gridShape = { nx: frame.grid.nx, ny: frame.grid.ny };
+    payload.buffers.gridBed = frame.grid.bed.buffer;
+    payload.buffers.gridDepth = frame.grid.depth.buffer;
+    payload.buffers.gridConcentration = frame.grid.concentration.buffer;
+    transfers.push(frame.grid.bed.buffer, frame.grid.depth.buffer, frame.grid.concentration.buffer);
+  }
+  post("frame", requestId, payload, transfers);
+}
+
+function makeCoupledFrame(oneD, twoD, c, diagnostics) {
+  const frame = makeFrame(oneD, c, diagnostics);
+  const depth = twoD.h.slice(), bed = twoD.bed.slice(), concentration = new Float64Array(twoD.n);
+  for (let i = 0; i < twoD.n; i++) {
+    let solid = 0;
+    for (let k = 0; k < twoD.kCount; k++) solid += twoD.hc[i * twoD.kCount + k];
+    concentration[i] = twoD.h[i] > c.solver.dryDepth ? solid / twoD.h[i] : 0;
+  }
+  frame.grid = { nx: twoD.nx, ny: twoD.ny, bed, depth, concentration };
+  return frame;
 }
 
 function diagnosticsFor(state, c, balance, initialInventory, maxCfl) {
@@ -1062,11 +1422,13 @@ function diagnosticsFor(state, c, balance, initialInventory, maxCfl) {
   const currentSolid = new Float64Array(state.kCount);
   const expectedSolid = new Float64Array(state.kCount);
   let solidNumerator = 0, solidDenominator = 0;
+  const grainErrors = new Array(state.kCount);
   for (let k = 0; k < state.kCount; k++) {
     currentSolid[k] = current.suspended[k] + current.bedSolid[k] + current.captured[k];
     expectedSolid[k] = initialInventory.suspended[k] + initialInventory.bedSolid[k] + initialInventory.captured[k] + balance.solidIn[k] - balance.solidOut[k];
     solidNumerator += Math.abs(currentSolid[k] - expectedSolid[k]);
     solidDenominator += Math.abs(expectedSolid[k]);
+    grainErrors[k] = Math.abs(currentSolid[k] - expectedSolid[k]) / Math.max(Math.abs(expectedSolid[k]), 1e-12);
   }
   const waterError = Math.abs(current.water - expectedWater) / Math.max(Math.abs(expectedWater), 1e-12);
   const sedimentError = solidNumerator / Math.max(solidDenominator, 1e-12);
@@ -1079,7 +1441,65 @@ function diagnosticsFor(state, c, balance, initialInventory, maxCfl) {
     maxConcentration: current.maxConcentration,
     maxCfl,
     waterVolume: current.water,
+    mixtureMomentum: current.momentum,
+    grainErrors,
+    capturedByStructure: state.structures.map((structure) => ({ id: structure.id, volume: Array.from(structure.captured) })),
   };
+}
+
+function combinedDiagnostics(oneD, twoD, c, balance, initialOneD, initialTwoD, maxCfl) {
+  const a = inventory(oneD, c), b = inventory2D(twoD, c);
+  const expectedWater = initialOneD.water + initialTwoD.water + balance.waterIn - balance.waterOut;
+  let solidNumerator = 0, solidDenominator = 0;
+  const grainErrors = new Array(oneD.kCount);
+  for (let k = 0; k < oneD.kCount; k++) {
+    const current = a.suspended[k] + a.bedSolid[k] + a.captured[k] + b.suspended[k] + b.bedSolid[k];
+    const expected = initialOneD.suspended[k] + initialOneD.bedSolid[k] + initialOneD.captured[k] + initialTwoD.suspended[k] + initialTwoD.bedSolid[k] + balance.solidIn[k] - balance.solidOut[k];
+    grainErrors[k] = Math.abs(current - expected) / Math.max(Math.abs(expected), 1e-12);
+    solidNumerator += Math.abs(current - expected); solidDenominator += Math.abs(expected);
+  }
+  return {
+    time: oneD.time, steps: oneD.steps, waterError: Math.abs(a.water + b.water - expectedWater) / Math.max(Math.abs(expectedWater), 1e-12),
+    sedimentError: solidNumerator / Math.max(solidDenominator, 1e-12), minDepth: Math.min(a.minDepth, b.minDepth), maxConcentration: Math.max(a.maxConcentration, b.maxConcentration),
+    maxCfl, waterVolume: a.water + b.water, mixtureMomentum: a.momentum + b.momentum, grainErrors,
+    interface: { evaluationsPerStep: 1 }, capturedByStructure: oneD.structures.map((structure) => ({ id: structure.id, volume: Array.from(structure.captured) })),
+  };
+}
+
+async function runCoupled1D2D(requestId, c, context) {
+  let oneD = createState1D(c), twoD = createState2D(c);
+  const c1 = Object.assign({}, c, { boundaries: { left: c.boundaries.left, right: "closed" } });
+  const initialOneD = inventory(oneD, c), initialTwoD = inventory2D(twoD, c);
+  const balance = { waterIn: 0, waterOut: 0, solidIn: new Float64Array(oneD.kCount), solidOut: new Float64Array(oneD.kCount) };
+  const random = mulberry32(c.solver.seed);
+  let nextOutput = 0, frameCount = 0, lastProgress = 0, maxCfl = 0;
+  transferFrame(requestId, makeCoupledFrame(oneD, twoD, c, combinedDiagnostics(oneD, twoD, c, balance, initialOneD, initialTwoD, maxCfl)));
+  frameCount++;
+  while (oneD.time < c.solver.duration - 1e-12) {
+    if (context.cancelled) throw new Error("cancelled");
+    while (context.paused && !context.cancelled) await new Promise((resolve) => setTimeout(resolve, 30));
+    if (oneD.steps >= c.solver.maxSteps || oneD.steps >= LIMITS.maxSteps) throw new Error("step上限に達しました");
+    const step1 = computeDt(oneD, c1), step2 = computeDt2D(twoD, c);
+    const dt = Math.min(step1.dt, step2.dt, c.solver.duration - oneD.time);
+    maxCfl = Math.max(maxCfl, step1.actualCfl * dt / step1.dt, step2.actualCfl * dt / step2.dt);
+    const oneStage1 = eulerStage(oneD, c1, dt, random), oneStage2 = eulerStage(oneStage1.state, c1, dt, random);
+    const twoStage1 = eulerStage2D(twoD, c, dt), twoStage2 = eulerStage2D(twoStage1, c, dt);
+    oneD = averageStates(oneD, oneStage2.state, c1); twoD = averageState2D(twoD, twoStage2, c);
+    applyCouplingFlux(oneD, twoD, c, dt);
+    const exchange = combineExchange(oneStage1.exchange, oneStage2.exchange);
+    balance.waterIn += exchange.waterIn; balance.waterOut += exchange.waterOut;
+    for (let k = 0; k < oneD.kCount; k++) { balance.solidIn[k] += exchange.solidIn[k]; balance.solidOut[k] += exchange.solidOut[k]; }
+    if (oneD.time + 1e-9 >= nextOutput && frameCount < LIMITS.maxFrames) {
+      transferFrame(requestId, makeCoupledFrame(oneD, twoD, c, combinedDiagnostics(oneD, twoD, c, balance, initialOneD, initialTwoD, maxCfl)));
+      frameCount++; nextOutput += c.solver.outputInterval;
+    }
+    const now = performance.now();
+    if (now - lastProgress >= 100) { lastProgress = now; post("progress", requestId, { progress: Math.min(1, oneD.time / c.solver.duration), time: oneD.time, steps: oneD.steps }); }
+    if ((oneD.steps & 15) === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  const finalDiagnostics = combinedDiagnostics(oneD, twoD, c, balance, initialOneD, initialTwoD, maxCfl);
+  transferFrame(requestId, makeCoupledFrame(oneD, twoD, c, finalDiagnostics));
+  post("complete", requestId, { summary: Object.assign({ frameCount }, finalDiagnostics) });
 }
 
 async function runStandard1D(requestId, c, context) {
@@ -1128,6 +1548,98 @@ function makeTestResult(id, title, status, value, threshold, detail) {
   return { id, title, status, value, threshold, detail };
 }
 
+function makeWorkerTestCase(options = {}) {
+  const n = options.n || 41;
+  const dx = options.dx || 1;
+  const duration = options.duration || 0.4;
+  const cells1d = [];
+  for (let i = 0; i < n; i++) {
+    const x = i * dx;
+    const bed = options.bed ? options.bed(x, i, n) : 0;
+    const initialDepth = options.depth ? options.depth(x, i, n, bed) : 1;
+    cells1d.push({ id: "t" + i, x, fixedBed: bed - 1, bed, width: 1, initialDepth });
+  }
+  return {
+    schemaVersion: 1,
+    meta: { name: "Worker numerical test" },
+    solver: { model: "standard1d", duration, outputInterval: duration, cfl: 0.35, seed: options.seed || 7, dryDepth: 1e-8, maxDt: options.maxDt || 0.005, estimatedMinDt: 0.0001, maxSteps: 200000 },
+    material: { fluidDensity: 1000, solidDensity: 2650, porosity: 0.35, manning: options.manning || 0, maxConcentration: 0.62, internalFrictionDeg: 35, erosionCoefficient: options.erosionCoefficient || 0, depositionCoefficient: options.depositionCoefficient || 0, yieldDepositionVelocity: options.yieldDepositionVelocity || 0, yieldDepositionCoefficient: options.yieldDepositionCoefficient || 0, activeLayerThickness: 0.1 },
+    grains: [{ id: "g1", diameter: 0.01, fraction: 0.6, settlingVelocity: 0.1 }, { id: "g2", diameter: 0.1, fraction: 0.4, settlingVelocity: 0.4 }],
+    cells1d,
+    inflow: [{ id: "i0", time: 0, discharge: options.inflow || 0, concentrations: [0, 0] }, { id: "i1", time: duration, discharge: options.inflow || 0, concentrations: [0, 0] }],
+    structures: options.structures || [], observers: [], boundaries: { left: options.left || "closed", right: options.right || "closed" },
+    grid2d: { enabled: false, nx: 2, ny: 2, dx: 1, dy: 1, originX: 0, originY: 0, elevation: [0, 0, 0, 0] },
+    uncertainty: { method: "none", cases: 1, seed: options.seed || 7 }, provenance: [],
+  };
+}
+
+function runWorkerTestCase(c, initialVelocity = 0, initialConcentrations = null) {
+  validateCase(c);
+  let state = createState1D(c);
+  if (initialVelocity) for (let i = 0; i < state.n; i++) state.q[i] = state.h[i] * initialVelocity;
+  if (initialConcentrations) for (let i = 0; i < state.n; i++) for (let k = 0; k < state.kCount; k++) state.hc[i * state.kCount + k] = state.h[i] * initialConcentrations[k];
+  const initialInventory = inventory(state, c);
+  const balance = { waterIn: 0, waterOut: 0, solidIn: new Float64Array(state.kCount), solidOut: new Float64Array(state.kCount) };
+  const random = mulberry32(c.solver.seed);
+  let maxCfl = 0;
+  while (state.time < c.solver.duration - 1e-12) {
+    const step = computeDt(state, c);
+    maxCfl = Math.max(maxCfl, step.actualCfl);
+    const stage1 = eulerStage(state, c, step.dt, random);
+    const stage2 = eulerStage(stage1.state, c, step.dt, random);
+    state = averageStates(state, stage2.state, c);
+    const exchange = combineExchange(stage1.exchange, stage2.exchange);
+    balance.waterIn += exchange.waterIn;
+    balance.waterOut += exchange.waterOut;
+    for (let k = 0; k < state.kCount; k++) { balance.solidIn[k] += exchange.solidIn[k]; balance.solidOut[k] += exchange.solidOut[k]; }
+  }
+  return { state, diagnostics: diagnosticsFor(state, c, balance, initialInventory, maxCfl), initialInventory };
+}
+
+function makeCoupledTestCase() {
+  const c = makeWorkerTestCase({ n: 21, duration: 0.12, maxDt: 0.002, depth: () => 0.35 });
+  c.solver.model = "coupled1d2d";
+  const nx = 8, ny = 6, base = c.cells1d[c.cells1d.length - 1].bed;
+  c.grid2d = { enabled: true, nx, ny, dx: 1.3, dy: 0.7, originX: 20, originY: -2, elevation: new Array(nx * ny).fill(base) };
+  return c;
+}
+
+function runCoupledTestCase(reverse = false, oblique = false) {
+  const c = makeCoupledTestCase();
+  let oneD = createState1D(c), twoD = createState2D(c);
+  for (let i = 0; i < oneD.n; i++) oneD.q[i] = oneD.h[i] * (reverse ? 0 : 0.25);
+  if (reverse) {
+    const j = Math.floor(twoD.ny / 2) * twoD.nx;
+    twoD.h[j] = 0.9; twoD.qx[j] = -0.18; twoD.qy[j] = oblique ? 0.11 : 0;
+  }
+  const c1 = Object.assign({}, c, { boundaries: { left: "closed", right: "closed" } });
+  const initialOneD = inventory(oneD, c), initialTwoD = inventory2D(twoD, c);
+  const balance = { waterIn: 0, waterOut: 0, solidIn: new Float64Array(oneD.kCount), solidOut: new Float64Array(oneD.kCount) };
+  const random = mulberry32(c.solver.seed);
+  let maxCfl = 0, interfaceEvaluations = 0;
+  while (oneD.time < c.solver.duration - 1e-12) {
+    const a = computeDt(oneD, c1), b = computeDt2D(twoD, c), dt = Math.min(a.dt, b.dt);
+    const o1 = eulerStage(oneD, c1, dt, random), o2 = eulerStage(o1.state, c1, dt, random);
+    const t1 = eulerStage2D(twoD, c, dt), t2 = eulerStage2D(t1, c, dt);
+    oneD = averageStates(oneD, o2.state, c1); twoD = averageState2D(twoD, t2, c); applyCouplingFlux(oneD, twoD, c, dt); interfaceEvaluations++;
+    maxCfl = Math.max(maxCfl, a.actualCfl * dt / a.dt, b.actualCfl * dt / b.dt);
+  }
+  return { oneD, twoD, diagnostics: combinedDiagnostics(oneD, twoD, c, balance, initialOneD, initialTwoD, maxCfl), interfaceEvaluations };
+}
+
+function manufacturedOrder() {
+  const errors = [];
+  for (const n of [40, 80, 160]) {
+    const values = new Float64Array(n);
+    for (let i = 0; i < n; i++) values[i] = Math.sin(2 * Math.PI * (i + 0.5) / n);
+    const slope = slopes(values);
+    let error = 0;
+    for (let i = 1; i < n - 1; i++) error += Math.abs(values[i] + 0.5 * slope[i] - Math.sin(2 * Math.PI * (i + 1) / n));
+    errors.push(error / (n - 2));
+  }
+  return Math.min(Math.log2(errors[0] / errors[1]), Math.log2(errors[1] / errors[2]));
+}
+
 function runSelfTests() {
   const results = [];
   try {
@@ -1150,6 +1662,111 @@ function runSelfTests() {
     try { integer(LIMITS.maxCells1D + 1, "cells", 3, LIMITS.maxCells1D); } catch (_) { rejected = true; }
     results.push(makeTestResult("limit", "上限+1拒否", rejected ? "pass" : "fail", rejected ? "拒否" : "受理", "拒否", "1Dセル上限+1"));
   } catch (error) { results.push(makeTestResult("limit", "上限+1拒否", "fail", "例外", "拒否", error.message)); }
+  try {
+    const eta = 2.5;
+    const c = makeWorkerTestCase({ duration: 0.25, bed: (x) => 0.25 * Math.sin(x * 0.37) + 0.08 * Math.cos(x * 0.91), depth: (x, i, n, bed) => eta - bed });
+    const result = runWorkerTestCase(c);
+    let maxVelocity = 0, maxEtaError = 0;
+    for (let i = 0; i < result.state.n; i++) { maxVelocity = Math.max(maxVelocity, Math.abs(result.state.q[i] / result.state.h[i])); maxEtaError = Math.max(maxEtaError, Math.abs(result.state.bed[i] + result.state.h[i] - eta)); }
+    const value = Math.max(maxVelocity, maxEtaError);
+    results.push(makeTestResult("lake-rest", "不規則河床の静水保持", value <= 1e-10 ? "pass" : "fail", value, "<=1e-10", "閉境界・完全湿潤"));
+  } catch (error) { results.push(makeTestResult("lake-rest", "不規則河床の静水保持", "fail", "例外", "<=1e-10", error.message)); }
+  try {
+    const c = makeWorkerTestCase({ duration: 0.3, maxDt: 0.0025, depth: (x, i, n) => i < n / 2 ? 1 : 0 });
+    const result = runWorkerTestCase(c);
+    const inventoryNow = inventory(result.state, c);
+    const relative = Math.abs(inventoryNow.water - result.initialInventory.water) / result.initialInventory.water;
+    const physical = result.diagnostics.minDepth >= -1e-12 && result.diagnostics.maxConcentration <= c.material.maxConcentration + 1e-12;
+    results.push(makeTestResult("dry-dam-break", "乾床ダムブレーク", physical && relative <= 1e-10 ? "pass" : "fail", relative, "保存<=1e-10", "濡れ乾き・正値"));
+  } catch (error) { results.push(makeTestResult("dry-dam-break", "乾床ダムブレーク", "fail", "例外", "保存<=1e-10", error.message)); }
+  try {
+    const c = makeWorkerTestCase({ duration: 0.4, bed: (x) => -0.01 * x, depth: () => 0.7, manning: 0.03 });
+    const result = runWorkerTestCase(c, 0.4);
+    let finiteState = true;
+    for (let i = 0; i < result.state.n; i++) finiteState = finiteState && Number.isFinite(result.state.h[i]) && Number.isFinite(result.state.q[i]) && result.state.h[i] >= 0;
+    results.push(makeTestResult("uniform-flow", "定常等流の安定性", finiteState && result.diagnostics.maxCfl <= c.solver.cfl + 1e-12 ? "pass" : "fail", result.diagnostics.maxCfl, "CFL<=0.35", "Manning半陰解法"));
+  } catch (error) { results.push(makeTestResult("uniform-flow", "定常等流の安定性", "fail", "例外", "有限・正値", error.message)); }
+  try {
+    const order = manufacturedOrder();
+    results.push(makeTestResult("manufactured-order", "滑らかな製造解のMUSCL収束", order >= 1.7 ? "pass" : "fail", order, ">=1.7", "sin波の界面再構成L1"));
+  } catch (error) { results.push(makeTestResult("manufactured-order", "滑らかな製造解のMUSCL収束", "fail", "例外", ">=1.7", error.message)); }
+  try {
+    const c = makeWorkerTestCase({ duration: 0.3, bed: (x) => -0.04 * x, depth: () => 0.8, erosionCoefficient: 0.02, depositionCoefficient: 0.04 });
+    const result = runWorkerTestCase(c, 0.6, [0.08, 0.04]);
+    let activeSumError = 0;
+    for (let i = 0; i < result.state.n; i++) { let sum = 0; for (let k = 0; k < result.state.kCount; k++) sum += result.state.activeFraction[i * result.state.kCount + k]; activeSumError = Math.max(activeSumError, Math.abs(sum - 1)); }
+    const errorValue = Math.max(result.diagnostics.sedimentError, activeSumError, ...result.diagnostics.grainErrors);
+    results.push(makeTestResult("morph-grains", "粒径別侵食・堆積・活性層", errorValue <= 1e-8 ? "pass" : "fail", errorValue, "<=1e-8", "移動固相・河床・粒径別収支"));
+  } catch (error) { results.push(makeTestResult("morph-grains", "粒径別侵食・堆積・活性層", "fail", "例外", "<=1e-8", error.message)); }
+  try {
+    const c = makeWorkerTestCase({ duration: 0.2, depth: () => 0.7, yieldDepositionVelocity: 0.5, yieldDepositionCoefficient: 0.8 });
+    const beforeBed = c.cells1d.reduce((sum, cell) => sum + cell.bed, 0);
+    const result = runWorkerTestCase(c, 0.05, [0.15, 0.05]);
+    const afterBed = result.state.bed.reduce((sum, value) => sum + value, 0);
+    results.push(makeTestResult("yield-deposition", "降伏応力型堆積", afterBed > beforeBed && result.diagnostics.sedimentError <= 1e-8 ? "pass" : "fail", result.diagnostics.sedimentError, "保存<=1e-8", "低流速・高濃度で河床上昇"));
+  } catch (error) { results.push(makeTestResult("yield-deposition", "降伏応力型堆積", "fail", "例外", "保存<=1e-8", error.message)); }
+  try {
+    const c = makeWorkerTestCase({ duration: 0.01, n: 5, depth: () => 1 });
+    const state = createState1D(c), i = 2;
+    state.hc[i * state.kCount] = 0.5; state.hc[i * state.kCount + 1] = 0.2; state.q[i] = 0.3;
+    const before = inventory(state, c); projectConcentrationToBed1D(state, i, c); const after = inventory(state, c);
+    const errors = [Math.abs(before.water - after.water) / Math.max(1, before.water)];
+    for (let k = 0; k < state.kCount; k++) errors.push(Math.abs(before.suspended[k] + before.bedSolid[k] - after.suspended[k] - after.bedSolid[k]) / Math.max(1, before.suspended[k] + before.bedSolid[k]));
+    const concentration = Array.from({ length: state.kCount }, (_, k) => state.hc[i * state.kCount + k]).reduce((a, b) => a + b, 0) / state.h[i];
+    const value = Math.max(...errors);
+    results.push(makeTestResult("concentration-projection", "保存的濃度上限射影", value <= 1e-12 && concentration <= c.material.maxConcentration + 1e-12 ? "pass" : "fail", value, "保存<=1e-12・C<=上限", "超過固相を粒径別に河床へ移し水量を保持"));
+  } catch (error) { results.push(makeTestResult("concentration-projection", "保存的濃度上限射影", "fail", "例外", "保存<=1e-12", error.message)); }
+  try {
+    const c = makeWorkerTestCase({ duration: 0.02, n: 5 });
+    c.grains = Array.from({ length: 8 }, (_, index) => ({ id: "g" + index, diameter: 0.001 * Math.pow(2, index), fraction: 0.125, settlingVelocity: 0.05 * (index + 1) }));
+    for (const point of c.inflow) point.concentrations = new Array(8).fill(0);
+    const result = runWorkerTestCase(c);
+    results.push(makeTestResult("eight-grains", "8粒径state", result.state.hc.length === 40 && result.diagnostics.grainErrors.length === 8 ? "pass" : "fail", result.state.hc.length, "5 cells × 8", "Float64Array粒径軸"));
+  } catch (error) { results.push(makeTestResult("eight-grains", "8粒径state", "fail", "例外", "5 cells × 8", error.message)); }
+  for (const type of ["impermeable", "slit", "grid"]) {
+    try {
+      const structure = { id: "dam", type, x: 20, height: 0.25, dischargeCoefficient: 0.58, slotWidth: 0.4, barSpacing: 0.05, blockageProbability: type === "grid" ? 0.1 : 0, remobilizationShear: 50, sedimentCapacity: 10 };
+      const c = makeWorkerTestCase({ duration: 0.25, structures: [structure], bed: (x) => -0.005 * x, depth: () => 0.6 });
+      const result = runWorkerTestCase(c, 0.35, [0.08, 0.02]);
+      const errorValue = Math.max(result.diagnostics.waterError, result.diagnostics.sedimentError);
+      const capacityOk = result.state.structures[0].captured.reduce((sum, value) => sum + value, 0) <= structure.sedimentCapacity + 1e-12;
+      results.push(makeTestResult("dam-" + type, "構造物保存: " + type, errorValue <= 1e-8 && capacityOk ? "pass" : "fail", errorValue, "<=1e-8", "閉領域・堆砂容量・構造物貯留を含む"));
+    } catch (error) { results.push(makeTestResult("dam-" + type, "構造物保存: " + type, "fail", "例外", "<=1e-8", error.message)); }
+  }
+  try {
+    const base = { height: 0.2, dischargeCoefficient: 0.58, slotWidth: 0.35, barSpacing: 0.06, blockageProbability: 0.04, remobilizationShear: 500, sedimentCapacity: 4 };
+    const structures = [["impermeable", 10], ["slit", 20], ["grid", 30]].map(([type, x], index) => Object.assign({ id: "d" + index, type, x }, base));
+    const c = makeWorkerTestCase({ duration: 0.3, structures, bed: (x) => -0.004 * x, depth: () => 0.7, seed: 99 });
+    const a = runWorkerTestCase(c, 0.3, [0.1, 0.03]);
+    const b = runWorkerTestCase(c, 0.3, [0.1, 0.03]);
+    const signature = (result) => result.state.structures.map((item) => [item.blockage, ...item.captured].join(":" )).join("|");
+    const errorValue = Math.max(a.diagnostics.waterError, a.diagnostics.sedimentError);
+    results.push(makeTestResult("dam-sequence", "複数連続ダム・Seed再現", errorValue <= 1e-8 && signature(a) === signature(b) ? "pass" : "fail", errorValue, "保存<=1e-8・完全一致", "3形式連続配置"));
+  } catch (error) { results.push(makeTestResult("dam-sequence", "複数連続ダム・Seed再現", "fail", "例外", "保存<=1e-8", error.message)); }
+  for (const [id, reverse, oblique, label] of [["forward", false, false, "順流"], ["reverse", true, false, "逆流"], ["oblique", true, true, "斜交流入"]]) {
+    try {
+      const result = runCoupledTestCase(reverse, oblique);
+      const errorValue = Math.max(result.diagnostics.waterError, result.diagnostics.sedimentError);
+      const singleEvaluation = result.interfaceEvaluations === result.oneD.steps && result.oneD.steps === result.twoD.steps;
+      results.push(makeTestResult("coupled-" + id, "1D–2D共有界面: " + label, errorValue <= 1e-6 && singleEvaluation ? "pass" : "fail", errorValue, "保存<=1e-6", "非一致幅・1 step 1流束評価"));
+    } catch (error) { results.push(makeTestResult("coupled-" + id, "1D–2D共有界面: " + label, "fail", "例外", "保存<=1e-6", error.message)); }
+  }
+  try {
+    const c = makeCoupledTestCase(), oneD = createState1D(c), twoD = createState2D(c);
+    const i = oneD.n - 1, j = Math.floor(twoD.ny / 2) * twoD.nx;
+    oneD.h[i] = 0.65; oneD.q[i] = 0.17; oneD.hc[i * oneD.kCount] = 0.065; oneD.hc[i * oneD.kCount + 1] = 0.026;
+    twoD.h[j] = 0.28; twoD.qx[j] = -0.04; twoD.qy[j] = 0.03; twoD.hc[j * twoD.kCount] = 0.014; twoD.hc[j * twoD.kCount + 1] = 0.007;
+    const volume1 = oneD.width[i] * oneD.dx[i], volume2 = twoD.dx * twoD.dy;
+    const totals = () => ({
+      mixture: oneD.h[i] * volume1 + twoD.h[j] * volume2,
+      momentumX: oneD.q[i] * volume1 + twoD.qx[j] * volume2,
+      solids: Array.from({ length: oneD.kCount }, (_, k) => oneD.hc[i * oneD.kCount + k] * volume1 + twoD.hc[j * twoD.kCount + k] * volume2),
+    });
+    const before = totals(); applyCouplingFlux(oneD, twoD, c, 0.002); const after = totals();
+    const relative = (a, b) => Math.abs(a - b) / Math.max(1, Math.abs(a));
+    const errorValue = Math.max(relative(before.mixture, after.mixture), relative(before.momentumX, after.momentumX), ...before.solids.map((value, k) => relative(value, after.solids[k])));
+    results.push(makeTestResult("coupled-interface-conservation", "共有界面の直接保存", errorValue <= 1e-12 ? "pass" : "fail", errorValue, "<=1e-12", "水・x運動量・各粒径を界面前後で比較"));
+  } catch (error) { results.push(makeTestResult("coupled-interface-conservation", "共有界面の直接保存", "fail", "例外", "<=1e-12", error.message)); }
   return results;
 }
 
@@ -1168,11 +1785,12 @@ self.onmessage = (event) => {
     if (message.type === "validate") { post("complete", requestId, { tests: runSelfTests() }); return; }
     if (message.type === "run") {
       const estimates = validateCase(message.caseData);
-      if (message.caseData.solver.model !== "standard1d") throw new Error("この段階では標準1D以外の数値カーネルは未実装です");
+      const runner = message.caseData.solver.model === "standard1d" ? runStandard1D : message.caseData.solver.model === "coupled1d2d" ? runCoupled1D2D : null;
+      if (!runner) throw new Error("高度二相流カーネルは未実装です");
       const context = { cancelled: false, paused: false };
       contexts.set(requestId, context);
       post("progress", requestId, { progress: 0, estimates });
-      runStandard1D(requestId, message.caseData, context)
+      runner(requestId, message.caseData, context)
         .catch((error) => post("error", requestId, { code: error.message === "cancelled" ? "CANCELLED" : "RUN_FAILED", message: error.message || String(error) }))
         .finally(() => contexts.delete(requestId));
       return;
@@ -1208,6 +1826,11 @@ window.DFDS = (() => {
   const CSV_HEADER = Object.freeze(["schema_version", "section", "id", "parent_id", "time_s", "x_m", "y_m", "z_m", "quantity", "value", "unit", "text"]);
   const SECTIONS = new Set(["meta", "solver", "material", "grain", "cell_1d", "inflow", "structure", "observer", "grid_2d", "boundary", "uncertainty", "provenance"]);
   const FORMULA_PREFIX = /^[=+\-@\t\r\n]/;
+  const GSI_HOST = "cyberjapandata.gsi.go.jp";
+  const GSI_DATASETS = Object.freeze([
+    Object.freeze({ id: "dem1a_png", title: "DEM1A", zoom: 17 }), Object.freeze({ id: "dem5a_png", title: "DEM5A", zoom: 15 }),
+    Object.freeze({ id: "dem5b_png", title: "DEM5B", zoom: 15 }), Object.freeze({ id: "dem5c_png", title: "DEM5C", zoom: 15 }), Object.freeze({ id: "dem_png", title: "DEM10B", zoom: 14 }),
+  ]);
   const textEncoder = new TextEncoder();
 
   class ValidationError extends Error {
@@ -1244,6 +1867,76 @@ window.DFDS = (() => {
       hash = Math.imul(hash, 0x01000193);
     }
     return (hash >>> 0).toString(16).padStart(8, "0");
+  }
+
+  function decodeGsiElevation(red, green, blue) {
+    for (const [value, label] of [[red, "R"], [green, "G"], [blue, "B"]]) assertFinite(value, "DEM " + label, 0, 255, true);
+    const encoded = red * 65536 + green * 256 + blue;
+    if (encoded === 8388608) return null;
+    return (encoded < 8388608 ? encoded : encoded - 16777216) * 0.01;
+  }
+
+  function latLonToTile(latitude, longitude, zoom) {
+    assertFinite(latitude, "緯度", -85.05112878, 85.05112878); assertFinite(longitude, "経度", -180, 180); assertFinite(zoom, "zoom", 0, 24, true);
+    const count = Math.pow(2, zoom), radians = latitude * Math.PI / 180;
+    return { x: Math.min(count - 1, Math.max(0, Math.floor((longitude + 180) / 360 * count))), y: Math.min(count - 1, Math.max(0, Math.floor((1 - Math.asinh(Math.tan(radians)) / Math.PI) / 2 * count))), zoom };
+  }
+
+  function buildGsiUrl(datasetId, zoom, x, y) {
+    const dataset = GSI_DATASETS.find((item) => item.id === datasetId);
+    if (!dataset || dataset.zoom !== zoom) throw new ValidationError("未知またはzoom不一致のGSI datasetです");
+    for (const [value, label] of [[x, "tile x"], [y, "tile y"]]) assertFinite(value, label, 0, Math.pow(2, zoom) - 1, true);
+    return "https://" + GSI_HOST + "/xyz/" + dataset.id + "/" + zoom + "/" + x + "/" + y + ".png";
+  }
+
+  function fillNearestMissing(values, nx, ny) {
+    const result = values.slice();
+    let missing = result.reduce((count, value) => count + (value === null ? 1 : 0), 0);
+    for (let iteration = 0; missing && iteration < nx + ny; iteration++) {
+      const updates = [];
+      for (let index = 0; index < result.length; index++) if (result[index] === null) {
+        const x = index % nx, y = Math.floor(index / nx), neighbors = [];
+        if (x) neighbors.push(result[index - 1]); if (x + 1 < nx) neighbors.push(result[index + 1]); if (y) neighbors.push(result[index - nx]); if (y + 1 < ny) neighbors.push(result[index + nx]);
+        const valid = neighbors.filter((value) => value !== null); if (valid.length) updates.push([index, valid.reduce((sum, value) => sum + value, 0) / valid.length]);
+      }
+      if (!updates.length) break;
+      for (const [index, value] of updates) { result[index] = value; missing--; }
+    }
+    if (missing) throw new ValidationError("DEM欠測を補間できません");
+    return result;
+  }
+
+  async function fetchGsiDem(latitude, longitude, timeoutMs = 8000) {
+    assertFinite(timeoutMs, "GSI timeout", 1000, 30000, true);
+    if (LIMITS.maxTiles < 1) throw new ValidationError("DEM tile上限が不正です");
+    for (const dataset of GSI_DATASETS) {
+      const tile = latLonToTile(latitude, longitude, dataset.zoom), url = buildGsiUrl(dataset.id, dataset.zoom, tile.x, tile.y);
+      const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeoutMs);
+      let response;
+      try { response = await fetch(url, { mode: "cors", credentials: "omit", cache: "no-store", redirect: "error", signal: controller.signal }); }
+      catch (error) { clearTimeout(timer); throw new ValidationError(error.name === "AbortError" ? "GSI取得がtimeoutしました" : "GSI通信に失敗しました", [{ level: "error", message: error.message || String(error) }]); }
+      clearTimeout(timer);
+      if (response.status === 404) continue;
+      if (!response.ok) throw new ValidationError("GSI応答が不正です: HTTP " + response.status);
+      const responseUrl = new URL(response.url);
+      if (responseUrl.protocol !== "https:" || responseUrl.hostname !== GSI_HOST) throw new ValidationError("GSI応答URLがallowlist外です");
+      const bitmap = await createImageBitmap(await response.blob());
+      if (bitmap.width !== 256 || bitmap.height !== 256) { bitmap.close(); throw new ValidationError("GSI tile寸法が256×256ではありません"); }
+      const canvas = document.createElement("canvas"); canvas.width = 256; canvas.height = 256;
+      const context = canvas.getContext("2d", { willReadFrequently: true }); context.drawImage(bitmap, 0, 0); bitmap.close();
+      const rgba = context.getImageData(0, 0, 256, 256).data, decoded = new Array(256 * 256); let missing = 0;
+      for (let index = 0; index < decoded.length; index++) { decoded[index] = decodeGsiElevation(rgba[index * 4], rgba[index * 4 + 1], rgba[index * 4 + 2]); if (decoded[index] === null) missing++; }
+      const missingRatio = missing / decoded.length;
+      if (missingRatio > 0.05) continue;
+      const elevation = missing ? fillNearestMissing(decoded, 256, 256) : decoded;
+      const resolution = 40075016.68557849 * Math.cos(latitude * Math.PI / 180) / Math.pow(2, dataset.zoom) / 256;
+      return {
+        grid: { enabled: true, nx: 256, ny: 256, dx: resolution, dy: resolution, originX: 0, originY: 0, elevation },
+        provenance: { id: "gsi-dem", key: "terrain", value: dataset.title + " z=" + dataset.zoom + " x=" + tile.x + " y=" + tile.y + "; fetched=" + new Date().toISOString() + "; missing=" + missing + "; source=国土地理院" },
+        dataset: dataset.title, url, missing, missingRatio,
+      };
+    }
+    throw new ValidationError("指定地点に利用可能なGSI DEMがありません。grid_2d CSVを読み込んでください");
   }
 
   function makeReferenceCase() {
@@ -1294,11 +1987,11 @@ window.DFDS = (() => {
         { id: "q004", time: 1200, discharge: 0, concentrations: [0, 0] },
       ],
       structures: [
-        { id: "dam-grid", type: "grid", x: 100, height: 10, dischargeCoefficient: 0.58, slotWidth: 0, barSpacing: 0.55, blockageProbability: 0.0008, remobilizationShear: 1600 },
-        { id: "dam-solid", type: "impermeable", x: 200, height: 10, dischargeCoefficient: 0.58, slotWidth: 0, barSpacing: 0, blockageProbability: 0, remobilizationShear: 0 },
+        { id: "dam-grid", type: "grid", x: 100, height: 10, dischargeCoefficient: 0.58, slotWidth: 0, barSpacing: 0.55, blockageProbability: 0.0008, remobilizationShear: 1600, sedimentCapacity: 50000 },
+        { id: "dam-solid", type: "impermeable", x: 200, height: 10, dischargeCoefficient: 0.58, slotWidth: 0, barSpacing: 0, blockageProbability: 0, remobilizationShear: 0, sedimentCapacity: 100000 },
       ],
       observers: [70, 150, 230, 290].map((x, index) => ({ id: "obs" + (index + 1), name: (index + 1) + "番観測点", x })),
-      boundaries: { right: "open" },
+      boundaries: { left: "inflow", right: "open" },
       grid2d: { enabled: false, nx: 2, ny: 2, dx: 10, dy: 10, originX: 0, originY: 0, elevation: [0, 0, 0, 0] },
       uncertainty: { method: "none", cases: 1, seed: 144 },
       provenance: [
@@ -1345,10 +2038,10 @@ window.DFDS = (() => {
     c.inflow = c.inflow.map((point) => ({ id: String(point.id).trim(), time: Number(point.time), discharge: Number(point.discharge), concentrations: point.concentrations.map(Number) })).sort((a, b) => a.time - b.time);
     c.structures = c.structures.map((item) => ({
       id: String(item.id).trim(), type: String(item.type), x: Number(item.x), height: Number(item.height), dischargeCoefficient: Number(item.dischargeCoefficient),
-      slotWidth: Number(item.slotWidth), barSpacing: Number(item.barSpacing), blockageProbability: Number(item.blockageProbability), remobilizationShear: Number(item.remobilizationShear),
+      slotWidth: Number(item.slotWidth), barSpacing: Number(item.barSpacing), blockageProbability: Number(item.blockageProbability), remobilizationShear: Number(item.remobilizationShear), sedimentCapacity: Number(item.sedimentCapacity),
     })).sort((a, b) => a.x - b.x || a.id.localeCompare(b.id));
     c.observers = c.observers.map((item) => ({ id: String(item.id).trim(), name: String(item.name).trim(), x: Number(item.x) })).sort((a, b) => a.x - b.x);
-    c.boundaries = { right: String(c.boundaries.right) };
+    c.boundaries = { left: String(c.boundaries.left), right: String(c.boundaries.right) };
     c.grid2d = Object.assign({}, c.grid2d, {
       enabled: Boolean(c.grid2d.enabled), nx: Number(c.grid2d.nx), ny: Number(c.grid2d.ny), dx: Number(c.grid2d.dx), dy: Number(c.grid2d.dy),
       originX: Number(c.grid2d.originX), originY: Number(c.grid2d.originY), elevation: c.grid2d.elevation.map(Number),
@@ -1425,7 +2118,7 @@ window.DFDS = (() => {
       structureIds.add(item.id);
       if (!["impermeable", "slit", "grid"].includes(item.type)) errors.push("構造物種類が不正です");
       if (c.cells1d.length) check(() => assertFinite(item.x, "ダム位置", c.cells1d[0].x, c.cells1d[c.cells1d.length - 1].x));
-      for (const [key, bounds] of Object.entries({ height: [0, 1000], dischargeCoefficient: [0, 5], slotWidth: [0, 100000], barSpacing: [0, 1000], blockageProbability: [0, 1], remobilizationShear: [0, 1e9] })) check(() => assertFinite(item[key], "structure." + key, bounds[0], bounds[1]));
+      for (const [key, bounds] of Object.entries({ height: [0, 1000], dischargeCoefficient: [0, 5], slotWidth: [0, 100000], barSpacing: [0, 1000], blockageProbability: [0, 1], remobilizationShear: [0, 1e9], sedimentCapacity: [0, 1e12] })) check(() => assertFinite(item[key], "structure." + key, bounds[0], bounds[1]));
     }
     const observerIds = new Set();
     for (const observer of c.observers) {
@@ -1434,7 +2127,9 @@ window.DFDS = (() => {
       if (!observer.name || observer.name.length > 120) errors.push("観測点名が不正です: " + observer.id);
       if (c.cells1d.length) check(() => assertFinite(observer.x, "観測点位置", c.cells1d[0].x, c.cells1d[c.cells1d.length - 1].x));
     }
+    if (!["inflow", "closed"].includes(c.boundaries.left)) errors.push("上流境界が不正です");
     if (!["open", "closed"].includes(c.boundaries.right)) errors.push("下流境界が不正です");
+    if (c.solver.model === "coupled1d2d" && !c.grid2d.enabled) errors.push("結合モデルには有効な2D格子が必要です");
     if (c.grid2d.enabled) {
       check(() => assertFinite(c.grid2d.nx, "2D nx", 2, 4096, true));
       check(() => assertFinite(c.grid2d.ny, "2D ny", 2, 4096, true));
@@ -1447,7 +2142,7 @@ window.DFDS = (() => {
     const estimatedSteps = Math.ceil(c.solver.duration / Math.min(c.solver.estimatedMinDt, estimateMinimumDt(c)));
     if (estimatedBytes > LIMITS.maxAppBytes) errors.push("アプリ全体の推定ピークメモリが384MiBを超えます");
     if (estimatedSteps > c.solver.maxSteps || estimatedSteps > LIMITS.maxSteps) errors.push("推定step数が上限を超えます");
-    if (c.solver.model !== "standard1d") warnings.push("選択モデルは実験段階です。数値カーネルの検証完了まで標準1Dを使用してください");
+    if (c.solver.model === "advanced") warnings.push("高度二相流は実験段階です。適用限界を確認してください");
     if (c.grid2d.enabled && c.grid2d.elevation.length && c.grid2d.elevation.every((value) => value === 0)) warnings.push("2D地形が全て0です");
     if (errors.length) throw new ValidationError("ケース検証に失敗しました", errors.map((message) => ({ level: "error", message })).concat(warnings.map((message) => ({ level: "warning", message }))));
     const frozen = deepFreeze(c);
@@ -1537,9 +2232,10 @@ window.DFDS = (() => {
     }
     for (const item of c.structures) {
       add("structure", item.id, "", "", item.x, "", "", "type", "", "", item.type);
-      for (const [key, unit] of Object.entries({ height: "m", dischargeCoefficient: "1", slotWidth: "m", barSpacing: "m", blockageProbability: "1/s", remobilizationShear: "Pa" })) add("structure", item.id, "", "", item.x, "", "", key, item[key], unit, "");
+      for (const [key, unit] of Object.entries({ height: "m", dischargeCoefficient: "1", slotWidth: "m", barSpacing: "m", blockageProbability: "1/s", remobilizationShear: "Pa", sedimentCapacity: "m3" })) add("structure", item.id, "", "", item.x, "", "", key, item[key], unit, "");
     }
     for (const item of c.observers) add("observer", item.id, "", "", item.x, "", "", "name", "", "", item.name);
+    add("boundary", "upstream", "", "", "", "", "", "left", "", "", c.boundaries.left);
     add("boundary", "downstream", "", "", "", "", "", "right", "", "", c.boundaries.right);
     for (const [key, unit] of Object.entries({ enabled: "1", nx: "1", ny: "1", dx: "m", dy: "m", originX: "m", originY: "m" })) add("grid_2d", "grid", "", "", "", "", "", key, key === "enabled" ? Number(c.grid2d.enabled) : c.grid2d[key], unit, "");
     if (c.grid2d.enabled) for (let index = 0; index < c.grid2d.elevation.length; index++) {
@@ -1578,10 +2274,10 @@ window.DFDS = (() => {
       "meta:name", "solver:model", "solver:duration", "solver:outputInterval", "solver:cfl", "solver:seed", "solver:dryDepth", "solver:maxDt", "solver:estimatedMinDt", "solver:maxSteps",
       "material:fluidDensity", "material:solidDensity", "material:porosity", "material:manning", "material:maxConcentration", "material:internalFrictionDeg",
       "material:erosionCoefficient", "material:depositionCoefficient", "material:yieldDepositionVelocity", "material:yieldDepositionCoefficient", "material:activeLayerThickness",
-      "boundary:right", "grid_2d:enabled", "grid_2d:nx", "grid_2d:ny", "grid_2d:dx", "grid_2d:dy", "grid_2d:originX", "grid_2d:originY",
+      "boundary:left", "boundary:right", "grid_2d:enabled", "grid_2d:nx", "grid_2d:ny", "grid_2d:dx", "grid_2d:dy", "grid_2d:originX", "grid_2d:originY",
       "uncertainty:method", "uncertainty:cases", "uncertainty:seed",
     ]);
-    const allowedUnits = new Set(["", "1", "s", "m", "m/s", "m3/s", "kg/m3", "s/m^(1/3)", "deg", "1/s", "Pa"]);
+    const allowedUnits = new Set(["", "1", "s", "m", "m/s", "m3", "m3/s", "kg/m3", "s/m^(1/3)", "deg", "1/s", "Pa"]);
     for (let rowIndex = 1; rowIndex < rows.length; rowIndex++) {
       const [versionRaw, section, id, parentId, timeRaw, xRaw, yRaw, zRaw, quantity, valueRaw, unit, textRaw] = rows[rowIndex];
       const line = rowIndex + 1;
@@ -1626,15 +2322,15 @@ window.DFDS = (() => {
       } else if (section === "structure") {
         const item = structures.get(id) || { id, x: numberCell(xRaw, line + "行目のx_m") };
         if (quantity === "type") item.type = textValue;
-        else if (["height", "dischargeCoefficient", "slotWidth", "barSpacing", "blockageProbability", "remobilizationShear"].includes(quantity)) item[quantity] = numberCell(valueRaw, line + "行目のvalue");
+        else if (["height", "dischargeCoefficient", "slotWidth", "barSpacing", "blockageProbability", "remobilizationShear", "sedimentCapacity"].includes(quantity)) item[quantity] = numberCell(valueRaw, line + "行目のvalue");
         else throw new ValidationError(line + "行目のstructure quantityが未知です");
         structures.set(id, item);
       } else if (section === "observer") {
         if (quantity !== "name") throw new ValidationError(line + "行目のobserver quantityが未知です");
         observers.set(id, { id, name: textValue, x: numberCell(xRaw, line + "行目のx_m") });
       } else if (section === "boundary") {
-        if (quantity !== "right") throw new ValidationError(line + "行目のboundary quantityが未知です");
-        c.boundaries.right = textValue;
+        if (!["left", "right"].includes(quantity)) throw new ValidationError(line + "行目のboundary quantityが未知です");
+        c.boundaries[quantity] = textValue;
       } else if (section === "grid_2d") {
         if (quantity === "elevation") c.grid2d.elevation.push(numberCell(valueRaw, line + "行目のvalue"));
         else if (["enabled", "nx", "ny", "dx", "dy", "originX", "originY"].includes(quantity)) c.grid2d[quantity] = quantity === "enabled" ? numberCell(valueRaw, line + "行目のvalue") === 1 : numberCell(valueRaw, line + "行目のvalue");
@@ -1659,7 +2355,7 @@ window.DFDS = (() => {
       delete item.byGrain;
     }
     c.inflow = Array.from(inflows.values()).sort((a, b) => a.time - b.time);
-    for (const item of structures.values()) if (["type", "height", "dischargeCoefficient", "slotWidth", "barSpacing", "blockageProbability", "remobilizationShear"].some((key) => item[key] === undefined)) throw new ValidationError("構造物レコードが不完全です: " + item.id);
+    for (const item of structures.values()) if (["type", "height", "dischargeCoefficient", "slotWidth", "barSpacing", "blockageProbability", "remobilizationShear", "sedimentCapacity"].some((key) => item[key] === undefined)) throw new ValidationError("構造物レコードが不完全です: " + item.id);
     c.structures = Array.from(structures.values()).sort((a, b) => a.x - b.x);
     c.observers = Array.from(observers.values()).sort((a, b) => a.x - b.x);
     return validateCase(c);
@@ -1680,6 +2376,20 @@ window.DFDS = (() => {
         if (!(buffer instanceof ArrayBuffer) || buffer.byteLength !== n * Float64Array.BYTES_PER_ELEMENT) throw new ValidationError("Worker buffer長が不正です: " + key);
         const values = new Float64Array(buffer);
         for (let index = 0; index < values.length; index++) if (!Number.isFinite(values[index])) throw new ValidationError("Worker bufferに非有限値があります: " + key + "[" + index + "]");
+      }
+      if (message.lengths.grid !== undefined) {
+        const gridLength = message.lengths.grid, shape = message.gridShape;
+        if (!Number.isInteger(gridLength) || gridLength < 4 || gridLength > LIMITS.maxCells2D || !shape || !Number.isInteger(shape.nx) || !Number.isInteger(shape.ny) || shape.nx * shape.ny !== gridLength) throw new ValidationError("Worker 2D grid長が不正です");
+        for (const key of ["gridBed", "gridDepth", "gridConcentration"]) {
+          const buffer = message.buffers[key];
+          if (!(buffer instanceof ArrayBuffer) || buffer.byteLength !== gridLength * Float64Array.BYTES_PER_ELEMENT) throw new ValidationError("Worker 2D buffer長が不正です: " + key);
+          const values = new Float64Array(buffer);
+          for (let index = 0; index < values.length; index++) {
+            if (!Number.isFinite(values[index])) throw new ValidationError("Worker 2D bufferに非有限値があります: " + key);
+            if (key === "gridDepth" && values[index] < -1e-10) throw new ValidationError("Worker 2D水深が負です");
+            if (key === "gridConcentration" && (values[index] < -1e-12 || values[index] > 1 + 1e-12)) throw new ValidationError("Worker 2D濃度が範囲外です");
+          }
+        }
       }
       for (const key of ["time", "steps", "waterError", "sedimentError", "minDepth", "maxConcentration", "maxCfl"]) {
         const value = key in message ? message[key] : message.diagnostics && message.diagnostics[key];
@@ -1762,7 +2472,7 @@ window.DFDS = (() => {
     ValidationError, Store, WorkerBridge,
     clone, deepFreeze, fnv1a, makeReferenceCase, estimateCaseBytes,
     normalizeCase, validateCase, parseCsv, serializeRows, serializeCaseCsv, parseCaseCsv,
-    validateWorkerMessage,
+    validateWorkerMessage, decodeGsiElevation, latLonToTile, buildGsiUrl, fetchGsiDem, GSI_DATASETS,
   });
 })();
   </script>
@@ -1781,7 +2491,7 @@ window.DFDS = (() => {
     "profileCanvas", "terrainCanvas", "hydrographCanvas", "massCanvas", "validationList", "timelineRange", "timelineCurrent", "timelineEnd",
     "metricTime", "metricSteps", "metricWaterError", "metricSedimentError", "metricMinDepth", "metricCfl", "diagnosticCount", "diagnosticSummary",
     "statusLog", "reproHash", "reproFrames", "workerState", "workspace", "csvFileInput", "importDialog", "importFileMeta", "importSummary",
-    "importDiagnostics", "importApplyButton", "runButton", "pauseButton", "cancelButton",
+    "importDiagnostics", "importApplyButton", "runButton", "pauseButton", "cancelButton", "terrainSourceMeta", "gsiLatInput", "gsiLonInput", "fetchGsiButton", "gsiStatus",
   ].map((id) => [id, byId(id)]));
 
   const allowedTransitions = Object.freeze({
@@ -1848,8 +2558,10 @@ window.DFDS = (() => {
     inputNumber("porosityInput", c.material.porosity);
     inputNumber("fluidDensityInput", c.material.fluidDensity);
     inputNumber("solidDensityInput", c.material.solidDensity);
-    dom.experimentalNotice.classList.toggle("hidden", c.solver.model === "standard1d");
+    dom.experimentalNotice.classList.toggle("hidden", c.solver.model !== "advanced");
     text(dom.geometryMeta, c.cells1d.length + " cells / " + c.grains.length + " grains");
+    const terrainProvenance = c.provenance.find((item) => item.id === "gsi-dem" || item.id === "generated-grid");
+    text(dom.terrainSourceMeta, terrainProvenance ? (terrainProvenance.id === "gsi-dem" ? "GSI DEM" : "ローカル生成") : "CSV / 既定");
     renderGrains(c);
     renderDams(c);
   }
@@ -1881,7 +2593,7 @@ window.DFDS = (() => {
   }
 
   function renderDams(c) {
-    const rows = c.structures.map((dam, index) => {
+    const rows = c.structures.flatMap((dam, index) => {
       const row = document.createElement("tr");
       const typeCell = document.createElement("td");
       const select = document.createElement("select");
@@ -1901,7 +2613,21 @@ window.DFDS = (() => {
       row.append(typeCell,
         makeNumericCell(dam.x, c.cells1d[0].x, c.cells1d[c.cells1d.length - 1].x, 1, (value) => updateNested("dam", index, "x", value)),
         makeNumericCell(dam.height, 0, 1000, 0.1, (value) => updateNested("dam", index, "height", value)), removeCell);
-      return row;
+      const detailRow = document.createElement("tr"); detailRow.className = "dam-detail";
+      const detailCell = document.createElement("td"); detailCell.colSpan = 4;
+      const grid = document.createElement("div"); grid.className = "form-grid";
+      for (const [key, label, min, max, step] of [
+        ["dischargeCoefficient", "流量係数", 0, 5, 0.01], ["slotWidth", "スリット幅 m", 0, 100000, 0.1], ["barSpacing", "格子間隔 m", 0, 1000, 0.01],
+        ["blockageProbability", "閉塞確率 1/s", 0, 1, 0.0001], ["remobilizationShear", "再移動せん断 Pa", 0, 1e9, 10], ["sedimentCapacity", "堆砂容量 m³", 0, 1e12, 10],
+      ]) {
+        const field = document.createElement("div"); field.className = "field";
+        const caption = document.createElement("label"); caption.textContent = label;
+        const input = document.createElement("input"); input.type = "number"; input.min = String(min); input.max = String(max); input.step = String(step); input.value = String(dam[key]); input.setAttribute("aria-label", dam.id + " " + label);
+        input.addEventListener("change", () => updateNested("dam", index, key, Number(input.value)));
+        field.append(caption, input); grid.append(field);
+      }
+      detailCell.append(grid); detailRow.append(detailCell);
+      return [row, detailRow];
     });
     dom.damTableBody.replaceChildren(...rows);
   }
@@ -1924,6 +2650,14 @@ window.DFDS = (() => {
     next.material.porosity = Number(dom.porosityInput.value);
     next.material.fluidDensity = Number(dom.fluidDensityInput.value);
     next.material.solidDensity = Number(dom.solidDensityInput.value);
+    if (next.solver.model === "coupled1d2d" && !next.grid2d.enabled) {
+      const nx = 24, ny = 18, dx = 10, dy = 10;
+      const base = next.cells1d[next.cells1d.length - 1].bed;
+      const elevation = [];
+      for (let iy = 0; iy < ny; iy++) for (let ix = 0; ix < nx; ix++) elevation.push(base - 0.012 * ix * dx + 0.0008 * Math.pow((iy - (ny - 1) / 2) * dy, 2));
+      next.grid2d = { enabled: true, nx, ny, dx, dy, originX: next.cells1d[next.cells1d.length - 1].x, originY: -0.5 * (ny - 1) * dy, elevation };
+      next.provenance = next.provenance.filter((item) => item.id !== "generated-grid").concat({ id: "generated-grid", key: "terrain", value: "UI生成の決定論的扇状地格子。実地形ではない" });
+    }
     return next;
   }
 
@@ -1981,6 +2715,10 @@ window.DFDS = (() => {
       x: new Float64Array(message.buffers.x), bed: new Float64Array(message.buffers.bed), fixedBed: new Float64Array(message.buffers.fixedBed),
       surface: new Float64Array(message.buffers.surface), discharge: new Float64Array(message.buffers.discharge), concentration: new Float64Array(message.buffers.concentration),
     };
+    if (message.lengths.grid !== undefined) frame.grid = {
+      nx: message.gridShape.nx, ny: message.gridShape.ny,
+      bed: new Float64Array(message.buffers.gridBed), depth: new Float64Array(message.buffers.gridDepth), concentration: new Float64Array(message.buffers.gridConcentration),
+    };
     const frames = store.get().frames.concat(frame).slice(-D.LIMITS.maxFrames);
     store.set({ frames, selectedFrame: frames.length - 1 });
     dom.reproFrames.textContent = String(frames.length);
@@ -1992,9 +2730,9 @@ window.DFDS = (() => {
   function startRun() {
     const validated = validateInputs(true);
     if (!validated) { transition("error", "入力エラー"); return; }
-    if (validated.caseData.solver.model !== "standard1d") {
+    if (validated.caseData.solver.model === "advanced") {
       transition("error", "実験モデル未検証");
-      addLog("この版では標準1Dだけが検証済みです。実験モデルの計算は開始しません。", "error");
+      addLog("高度二相流は実験モデルです。カーネル検証が完了するまで開始しません。", "error");
       return;
     }
     if (!bridge) { transition("error", "Worker利用不可"); return; }
@@ -2064,6 +2802,13 @@ window.DFDS = (() => {
       const csv = D.serializeCaseCsv(validated.caseData);
       const imported = D.parseCaseCsv(csv);
       results.push(testResult("csv-roundtrip", "ケースCSV round-trip", imported.hash === validated.hash, "export→import後の正規化ハッシュ", imported.hash, validated.hash));
+      const gridCase = D.makeReferenceCase();
+      gridCase.solver.model = "coupled1d2d";
+      gridCase.grid2d = { enabled: true, nx: 3, ny: 2, dx: 2.5, dy: 4, originX: 100, originY: -8, elevation: [12.1, 12.0, 11.8, 11.9, 11.7, 11.4] };
+      const gridValidated = D.validateCase(gridCase);
+      const gridImported = D.parseCaseCsv(D.serializeCaseCsv(gridValidated.caseData));
+      const gridRoundTrip = gridImported.hash === gridValidated.hash && gridImported.caseData.grid2d.enabled && gridImported.caseData.grid2d.elevation.every((value, index) => value === gridValidated.caseData.grid2d.elevation[index]);
+      results.push(testResult("csv-grid-roundtrip", "2D地形CSV round-trip", gridRoundTrip, "enabled・形状・全標高値", gridImported.hash, gridValidated.hash));
       const formula = D.serializeRows([["=2+2", -1, "+cmd", "@risk"]], false);
       results.push(testResult("csv-injection", "CSV式注入の無害化", formula.includes("'=2+2") && formula.includes("'+cmd") && formula.includes("'@risk") && formula.includes(",-1,"), "文字列先頭だけをアポストロフィで無害化し負数は保持"));
       let malformedRejected = false;
@@ -2105,6 +2850,14 @@ window.DFDS = (() => {
         D.validateWorkerMessage({ protocolVersion: 1, requestId: "active", type: "frame", time: 0, steps: 0, diagnostics: { time: 0, steps: 0, waterError: 0, sedimentError: 0, minDepth: 0, maxConcentration: 0, maxCfl: 0 }, lengths: { profile: 3 }, buffers: { x: bad.buffer, bed: bad.buffer.slice(0), fixedBed: bad.buffer.slice(0), surface: bad.buffer.slice(0), discharge: bad.buffer.slice(0), concentration: bad.buffer.slice(0) } }, "active", 3);
       } catch (_) { invalidBufferRejected = true; }
       results.push(testResult("worker-buffer", "非有限Worker bufferの拒否", invalidBufferRejected, "転送配列を要素単位で検証"));
+      const demDecode = D.decodeGsiElevation(0, 0, 0) === 0 && D.decodeGsiElevation(128, 0, 0) === null && Math.abs(D.decodeGsiElevation(255, 255, 255) + 0.01) < 1e-12;
+      results.push(testResult("gsi-decode", "GSI DEM RGB decode", demDecode, "0m・NA・負標高", "公式24bit仕様"));
+      let gsiAllowlist = false, unknownDatasetRejected = false;
+      try { const tile = D.latLonToTile(35.681236, 139.767125, 15), url = new URL(D.buildGsiUrl("dem5a_png", 15, tile.x, tile.y)); gsiAllowlist = url.protocol === "https:" && url.hostname === "cyberjapandata.gsi.go.jp"; try { D.buildGsiUrl("evil", 15, tile.x, tile.y); } catch (_) { unknownDatasetRejected = true; } } catch (_) { gsiAllowlist = false; }
+      gsiAllowlist = gsiAllowlist && unknownDatasetRejected;
+      results.push(testResult("gsi-url", "GSI URL allowlist・tile座標", gsiAllowlist, "既知datasetのみ", "HTTPS固定host"));
+      const gsiFallbackOrder = D.GSI_DATASETS.map((item) => item.id + ":" + item.zoom).join("|") === "dem1a_png:17|dem5a_png:15|dem5b_png:15|dem5c_png:15|dem_png:14";
+      results.push(testResult("gsi-fallback-order", "GSI dataset fallback順", gsiFallbackOrder, "高解像度からDEM10Bへ", D.GSI_DATASETS.map((item) => item.id).join(" → ")));
     } catch (error) {
       results.push(testResult("main-exception", "main thread自己試験", false, error.message || String(error)));
     }
@@ -2128,6 +2881,20 @@ window.DFDS = (() => {
     const url = URL.createObjectURL(blob); const link = document.createElement("a");
     link.href = url; link.download = "debris_flow_case_" + validated.hash + ".csv"; document.body.append(link); link.click(); link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 0); addLog("ケースCSVを保存しました: " + validated.hash, "success");
+  }
+
+  async function fetchGsiTerrain() {
+    const previous = dom.fetchGsiButton.disabled; dom.fetchGsiButton.disabled = true; dom.gsiStatus.textContent = "固定allowlistからDEMを検証取得中…";
+    try {
+      const result = await D.fetchGsiDem(Number(dom.gsiLatInput.value), Number(dom.gsiLonInput.value));
+      const next = D.clone(store.get().rawCase); next.grid2d = result.grid;
+      next.provenance = next.provenance.filter((item) => !["gsi-dem", "generated-grid"].includes(item.id)).concat(result.provenance);
+      applyEditedCase(next, result.dataset + "を適用しました（欠測 " + result.missing + " pixels）");
+      dom.gsiStatus.textContent = result.dataset + " / 256×256 / 欠測率 " + format(result.missingRatio * 100, 3) + "%";
+      byId("gsiAttribution").classList.remove("hidden"); setView("terrain");
+    } catch (error) {
+      dom.gsiStatus.textContent = "取得失敗。現在の地形を保持しました: " + (error.message || String(error)); addLog(dom.gsiStatus.textContent, "error");
+    } finally { dom.fetchGsiButton.disabled = previous; }
   }
 
   async function importFile(file) {
@@ -2230,14 +2997,43 @@ window.DFDS = (() => {
     ctx.fillStyle = palette("--text"); ctx.textAlign = "left"; ctx.font = "bold 11px " + getComputedStyle(document.body).fontFamily; ctx.fillText(title, box.left, 14);
   }
 
+  class TerrainWebGLRenderer {
+    constructor() {
+      this.canvas = document.createElement("canvas");
+      this.gl = this.canvas.getContext("webgl2", { alpha: false, antialias: false, depth: false, preserveDrawingBuffer: true });
+      if (!this.gl) return;
+      try {
+        const gl = this.gl;
+        const shader = (type, source) => { const item = gl.createShader(type); gl.shaderSource(item, source); gl.compileShader(item); if (!gl.getShaderParameter(item, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(item)); return item; };
+        const program = gl.createProgram();
+        gl.attachShader(program, shader(gl.VERTEX_SHADER, "#version 300 es\nprecision highp float;const vec2 p[6]=vec2[6](vec2(-1.,-1.),vec2(1.,-1.),vec2(-1.,1.),vec2(-1.,1.),vec2(1.,-1.),vec2(1.,1.));out vec2 uv;void main(){vec2 q=p[gl_VertexID];uv=vec2((q.x+1.)*.5,1.-(q.y+1.)*.5);gl_Position=vec4(q,0.,1.);}"));
+        gl.attachShader(program, shader(gl.FRAGMENT_SHADER, "#version 300 es\nprecision highp float;uniform sampler2D tex;in vec2 uv;out vec4 color;void main(){color=texture(tex,uv);}"));
+        gl.linkProgram(program); if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
+        this.program = program; this.texture = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, this.texture); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      } catch (_) { this.gl = null; }
+    }
+    render(pixels, nx, ny) {
+      if (!this.gl) return null;
+      const gl = this.gl; this.canvas.width = nx; this.canvas.height = ny; gl.viewport(0, 0, nx, ny); gl.useProgram(this.program); gl.bindTexture(gl.TEXTURE_2D, this.texture); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, nx, ny, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels); gl.drawArrays(gl.TRIANGLES, 0, 6); return this.canvas;
+    }
+  }
+  const terrainRenderer = new TerrainWebGLRenderer();
+
   function drawTerrain() {
-    const { context: ctx, width, height } = canvasContext(dom.terrainCanvas); const c = store.get().validated ? store.get().validated.caseData : store.get().rawCase;
+    const { context: ctx, width, height } = canvasContext(dom.terrainCanvas); const c = store.get().validated ? store.get().validated.caseData : store.get().rawCase; const frame = selectedFrame();
     ctx.clearRect(0, 0, width, height);
     if (!c.grid2d.enabled) { drawEmpty(ctx, width, height, "2D地形は無効です。標準1D縦断を使用中。"); return; }
-    const [min, max] = rangeOf([c.grid2d.elevation], 0); const cellW = width / c.grid2d.nx, cellH = height / c.grid2d.ny;
-    for (let iy = 0; iy < c.grid2d.ny; iy++) for (let ix = 0; ix < c.grid2d.nx; ix++) {
-      const value = c.grid2d.elevation[iy * c.grid2d.nx + ix]; const t = (value - min) / Math.max(1e-12, max - min); ctx.fillStyle = "hsl(" + (155 - 95 * t) + " 35% " + (18 + 35 * t) + "%)"; ctx.fillRect(ix * cellW, iy * cellH, Math.ceil(cellW), Math.ceil(cellH));
+    const grid = frame.grid || { nx: c.grid2d.nx, ny: c.grid2d.ny, bed: c.grid2d.elevation, depth: new Float64Array(c.grid2d.nx * c.grid2d.ny) };
+    const [min, max] = rangeOf([grid.bed], 0); const [, maxDepth] = rangeOf([grid.depth], 0); const cellW = width / grid.nx, cellH = height / grid.ny;
+    const pixels = new Uint8Array(grid.nx * grid.ny * 4);
+    for (let iy = 0; iy < grid.ny; iy++) for (let ix = 0; ix < grid.nx; ix++) {
+      const index = iy * grid.nx + ix, value = grid.bed[index], t = (value - min) / Math.max(1e-12, max - min);
+      const baseR = 35 + 95 * t, baseG = 78 + 72 * t, baseB = 62 + 18 * t, wet = grid.depth[index] > 1e-8 ? 0.25 + 0.7 * Math.min(1, grid.depth[index] / Math.max(maxDepth, 1e-9)) : 0;
+      pixels[index * 4] = Math.round(baseR * (1 - wet) + 45 * wet); pixels[index * 4 + 1] = Math.round(baseG * (1 - wet) + 160 * wet); pixels[index * 4 + 2] = Math.round(baseB * (1 - wet) + 255 * wet); pixels[index * 4 + 3] = 255;
     }
+    const rendered = terrainRenderer.render(pixels, grid.nx, grid.ny);
+    if (rendered) { ctx.imageSmoothingEnabled = false; ctx.drawImage(rendered, 0, 0, width, height); }
+    else for (let iy = 0; iy < grid.ny; iy++) for (let ix = 0; ix < grid.nx; ix++) { const index = iy * grid.nx + ix; ctx.fillStyle = "rgb(" + pixels[index * 4] + " " + pixels[index * 4 + 1] + " " + pixels[index * 4 + 2] + ")"; ctx.fillRect(ix * cellW, iy * cellH, Math.ceil(cellW), Math.ceil(cellH)); }
   }
 
   function renderMetrics(frame) {
@@ -2265,11 +3061,12 @@ window.DFDS = (() => {
     byId("addDamButton").addEventListener("click", () => {
       const next = collectForm(); const used = new Set(next.structures.map((item) => item.id)); let number = next.structures.length + 1; while (used.has("dam-" + number)) number++;
       const x0 = next.cells1d[0].x, x1 = next.cells1d[next.cells1d.length - 1].x;
-      next.structures.push({ id: "dam-" + number, type: "impermeable", x: x0 + (x1 - x0) * 0.5, height: 5, dischargeCoefficient: 0.58, slotWidth: 1, barSpacing: 0.5, blockageProbability: 0, remobilizationShear: 0 });
+      next.structures.push({ id: "dam-" + number, type: "impermeable", x: x0 + (x1 - x0) * 0.5, height: 5, dischargeCoefficient: 0.58, slotWidth: 1, barSpacing: 0.5, blockageProbability: 0, remobilizationShear: 0, sedimentCapacity: 50000 });
       applyEditedCase(next, "砂防ダムを追加しました");
     });
     byId("validateButton").addEventListener("click", runSelfTests); byId("runButton").addEventListener("click", startRun); byId("pauseButton").addEventListener("click", togglePause); byId("cancelButton").addEventListener("click", cancelRun);
     byId("exportButton").addEventListener("click", exportCase); byId("importButton").addEventListener("click", () => dom.csvFileInput.click());
+    dom.fetchGsiButton.addEventListener("click", fetchGsiTerrain);
     dom.csvFileInput.addEventListener("change", () => { if (dom.csvFileInput.files && dom.csvFileInput.files[0]) importFile(dom.csvFileInput.files[0]); });
     byId("importCancelButton").addEventListener("click", closeImport); dom.importApplyButton.addEventListener("click", applyImported);
     document.querySelectorAll(".view-tab").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
@@ -2289,6 +3086,7 @@ window.DFDS = (() => {
       bridge = new D.WorkerBridge(byId("solver-worker-source").textContent); dom.workerState.textContent = "生成中";
       bridge.send("init", {}, { onReady: () => { dom.workerState.textContent = "ready / protocol 1"; addLog("Worker protocol 1 を初期化しました", "success"); }, onError: (error) => { dom.workerState.textContent = "error"; addLog(error.message, "error"); } });
     } catch (error) { dom.workerState.textContent = "利用不可"; addLog(error.message || String(error), "error"); }
+    addLog("2D描画: " + (terrainRenderer.gl ? "WebGL2" : "Canvas 2D fallback"));
     addLog("参照ケースを読み込みました");
   }
 
