@@ -260,6 +260,7 @@
         <button type="button" class="ghost" id="importButton">CSV読込</button>
         <button type="button" class="ghost" id="exportButton">CSV保存</button>
         <button type="button" class="ghost" id="resultExportButton" disabled>結果CSV</button>
+        <button type="button" class="ghost" id="resetButton" title="組み込み参照ケースへ戻す">リセット</button>
         <button type="button" class="ghost" id="validateButton"><span class="label-wide">自己</span>検証</button>
         <button type="button" class="primary" id="runButton">計算開始</button>
         <button type="button" class="ghost" id="pauseButton" disabled>一時停止</button>
@@ -3073,7 +3074,7 @@ window.DFDS = (() => {
     "profileCanvas", "terrainCanvas", "hydrographCanvas", "massCanvas", "validationList", "timelineRange", "timelineCurrent", "timelineEnd",
     "metricTime", "metricSteps", "metricWaterError", "metricSedimentError", "metricMinDepth", "metricCfl", "diagnosticCount", "diagnosticSummary",
     "statusLog", "reproHash", "reproFrames", "workerState", "workspace", "csvFileInput", "importDialog", "importFileMeta", "importSummary",
-    "importDiagnostics", "importApplyButton", "runButton", "pauseButton", "cancelButton", "resultExportButton", "resultExportDialog", "resultExportCloseButton", "terrainSourceMeta", "gsiLatInput", "gsiLonInput", "fetchGsiButton", "gsiStatus",
+    "importDiagnostics", "importApplyButton", "resetButton", "runButton", "pauseButton", "cancelButton", "resultExportButton", "resultExportDialog", "resultExportCloseButton", "terrainSourceMeta", "gsiLatInput", "gsiLonInput", "fetchGsiButton", "gsiStatus",
     "uncertaintyMethod", "ensembleCases", "ensembleEstimate", "ensembleRunButton", "ensembleCancelButton", "ensembleExportButton", "ensembleStatus", "ensembleCanvas",
   ].map((id) => [id, byId(id)]));
 
@@ -3091,8 +3092,14 @@ window.DFDS = (() => {
   });
   let bridge = null;
   let ensembleManager = null;
+  let terrainFetchActive = false;
   let resizeFrame = 0;
   const MAX_ENSEMBLE_WORKERS = 4;
+
+  function updateResetAvailability() {
+    const state = store.get();
+    dom.resetButton.disabled = terrainFetchActive || state.ensembleRunning || !["idle", "error"].includes(state.phase);
+  }
 
   function transition(next, label) {
     const current = store.get().phase;
@@ -3105,6 +3112,7 @@ window.DFDS = (() => {
     dom.pauseButton.disabled = !["running", "paused"].includes(next);
     dom.pauseButton.textContent = next === "paused" ? "再開" : "一時停止";
     dom.cancelButton.disabled = !["running", "paused"].includes(next);
+    updateResetAvailability();
   }
 
   function addLog(message, level = "info") {
@@ -3181,6 +3189,7 @@ window.DFDS = (() => {
     results.sort((a, b) => a.index - b.index);
     store.set({ ensembleResults: results, ensembleRunning: false });
     dom.ensembleRunButton.disabled = false; dom.ensembleCancelButton.disabled = true; dom.ensembleExportButton.disabled = results.length === 0;
+    updateResetAvailability();
     const completed = results.filter((item) => item.status === "complete").length, failed = results.filter((item) => item.status === "failed").length, interrupted = results.filter((item) => item.status === "cancelled" || item.status === "not-run").length;
     dom.ensembleStatus.textContent = (cancelled ? "停止: " : "完了: ") + completed + "/" + samples.length + " 成功、" + failed + " 失敗、" + interrupted + " 中断/未実行";
     drawEnsembleResults(); addLog("ensemble " + (cancelled ? "停止" : "完了") + ": " + completed + "/" + samples.length, failed ? "warning" : "success");
@@ -3232,7 +3241,7 @@ window.DFDS = (() => {
     const method = dom.uncertaintyMethod.value, cases = Number(dom.ensembleCases.value), seed = Number(dom.seedInput.value);
     if (method === "none") { addLog("感度分析手法を選択してください", "warning"); return; }
     let samples; try { samples = D.generateEnsembleSamples(validated.caseData, method, cases, seed); } catch (error) { addLog(error.message || String(error), "error"); return; }
-    store.set({ ensembleResults: [], ensembleRunning: true }); dom.ensembleRunButton.disabled = true; dom.ensembleCancelButton.disabled = false; dom.ensembleExportButton.disabled = true; drawEnsembleResults();
+    store.set({ ensembleResults: [], ensembleRunning: true }); dom.ensembleRunButton.disabled = true; dom.ensembleCancelButton.disabled = false; dom.ensembleExportButton.disabled = true; updateResetAvailability(); drawEnsembleResults();
     addLog(method + " ensembleを開始: " + cases + " case / Seed " + seed); executeEnsemble(validated, samples);
   }
 
@@ -3410,6 +3419,38 @@ window.DFDS = (() => {
     syncForm(next);
     renderAll();
     validateInputs(false);
+  }
+
+  function resetApplication() {
+    const state = store.get();
+    if (terrainFetchActive || state.ensembleRunning || !["idle", "error"].includes(state.phase)) {
+      addLog("処理中はリセットできません", "warning");
+      return;
+    }
+    const reference = D.makeReferenceCase();
+    store.set({
+      rawCase: reference, validated: null, frames: [], selectedFrame: 0, activeRunId: null, paused: false,
+      tests: [], importCandidate: null, view: "profile", logs: [], progress: 0, ensembleResults: [], ensembleRunning: false,
+    });
+    if (dom.importDialog.open) closeImport(); else dom.csvFileInput.value = "";
+    if (dom.resultExportDialog.open) closeResultExport();
+    dom.progressBar.style.width = "0%";
+    dom.timelineRange.max = "0"; dom.timelineRange.value = "0";
+    dom.reproFrames.textContent = "0";
+    dom.resultExportButton.disabled = true;
+    dom.ensembleRunButton.disabled = false; dom.ensembleCancelButton.disabled = true; dom.ensembleExportButton.disabled = true;
+    dom.ensembleStatus.textContent = "未実行";
+    dom.gsiLatInput.value = dom.gsiLatInput.defaultValue; dom.gsiLonInput.value = dom.gsiLonInput.defaultValue;
+    dom.gsiStatus.textContent = "任意のオンライン補助。失敗時は現在の地形を保持します。";
+    byId("gsiAttribution").classList.add("hidden");
+    renderTestResults([]);
+    syncForm(reference);
+    validateInputs(false);
+    updateEnsembleEstimate();
+    setView("profile");
+    transition("idle", "初期状態");
+    renderAll();
+    addLog("組み込み参照ケースへリセットしました", "success");
   }
 
   function showDiagnostics(items, summary) {
@@ -3706,7 +3747,7 @@ window.DFDS = (() => {
   function closeResultExport() { if (typeof dom.resultExportDialog.close === "function") dom.resultExportDialog.close(); else dom.resultExportDialog.removeAttribute("open"); }
 
   async function fetchGsiTerrain() {
-    const previous = dom.fetchGsiButton.disabled; dom.fetchGsiButton.disabled = true; dom.gsiStatus.textContent = "固定allowlistからDEMを検証取得中…";
+    const previous = dom.fetchGsiButton.disabled; terrainFetchActive = true; dom.fetchGsiButton.disabled = true; updateResetAvailability(); dom.gsiStatus.textContent = "固定allowlistからDEMを検証取得中…";
     try {
       const result = await D.fetchGsiDem(Number(dom.gsiLatInput.value), Number(dom.gsiLonInput.value));
       const next = D.clone(store.get().rawCase); next.grid2d = result.grid;
@@ -3716,7 +3757,7 @@ window.DFDS = (() => {
       byId("gsiAttribution").classList.remove("hidden"); setView("terrain");
     } catch (error) {
       dom.gsiStatus.textContent = "取得失敗。現在の地形を保持しました: " + (error.message || String(error)); addLog(dom.gsiStatus.textContent, "error");
-    } finally { dom.fetchGsiButton.disabled = previous; }
+    } finally { terrainFetchActive = false; dom.fetchGsiButton.disabled = previous; updateResetAvailability(); }
   }
 
   async function importFile(file) {
@@ -3894,7 +3935,7 @@ window.DFDS = (() => {
       next.observers.push({ id: "obs" + number, name: number + "番観測点", x: x0 + (x1 - x0) * 0.5 }); applyEditedCase(next, "観測点を追加しました");
     });
     dom.observationSelect.addEventListener("change", renderAll);
-    byId("validateButton").addEventListener("click", runSelfTests); byId("runButton").addEventListener("click", startRun); byId("pauseButton").addEventListener("click", togglePause); byId("cancelButton").addEventListener("click", cancelRun);
+    byId("validateButton").addEventListener("click", runSelfTests); dom.resetButton.addEventListener("click", resetApplication); byId("runButton").addEventListener("click", startRun); byId("pauseButton").addEventListener("click", togglePause); byId("cancelButton").addEventListener("click", cancelRun);
     dom.ensembleRunButton.addEventListener("click", startEnsemble); dom.ensembleCancelButton.addEventListener("click", cancelEnsemble); dom.ensembleExportButton.addEventListener("click", exportEnsemble);
     byId("exportButton").addEventListener("click", exportCase); byId("importButton").addEventListener("click", () => dom.csvFileInput.click()); dom.resultExportButton.addEventListener("click", openResultExport);
     dom.resultExportCloseButton.addEventListener("click", closeResultExport); document.querySelectorAll("[data-result-export]").forEach((button) => button.addEventListener("click", () => exportResult(button.dataset.resultExport)));
