@@ -1,0 +1,20 @@
+# Logs and transient outputs
+logs/
+*.log
+tmp/
+.playwright-cli/
+
+# Generated validation artifacts
+.output/*
+!.output/.gitkeep
+
+# Editor and OS files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secrets and local settings
+.env
+*.local

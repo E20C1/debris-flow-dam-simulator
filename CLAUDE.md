@@ -1,0 +1,3 @@
+- セッション開始時に `AGENTS.md` を必ず読み込むこと。
+- `.agent/memory/MEMORY.md`、`.agent/handoff/HANDOFF.md`、`.spec/PLAN.md`、`.spec/SPEC.md`、`.spec/TODO.md` の順に確認すること。
+- Claude固有の自動メモリを必須ルールや完了状態の唯一の保存先にしないこと。
