@@ -191,8 +191,8 @@
     .status-log li { padding: 5px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
     .status-log time { color: var(--faint); margin-right: 7px; }
     .status-log [data-level="error"] { color: var(--danger); }
-    .status-log [data-level="warn"] { color: var(--warning); }
-    .status-log [data-level="ok"] { color: var(--accent-2); }
+    .status-log [data-level="warn"], .status-log [data-level="warning"] { color: var(--warning); }
+    .status-log [data-level="ok"], .status-log [data-level="success"] { color: var(--accent-2); }
     .validation-list { display: grid; gap: 7px; padding: 10px; }
     .validation-item { display: grid; grid-template-columns: 12px 1fr auto; align-items: start; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
     .validation-dot { width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; background: var(--faint); }
@@ -304,13 +304,27 @@
             <div class="field"><label for="porosityInput">河床空隙率</label><input id="porosityInput" type="number" min="0.01" max="0.8" step="0.01"></div>
             <div class="field"><label for="fluidDensityInput">液相密度 <span class="unit">kg/m³</span></label><input id="fluidDensityInput" type="number" min="500" max="3000" step="1"></div>
             <div class="field"><label for="solidDensityInput">固相密度 <span class="unit">kg/m³</span></label><input id="solidDensityInput" type="number" min="1000" max="6000" step="1"></div>
+            <div class="field"><label for="maxConcentrationInput">最大固相率</label><input id="maxConcentrationInput" type="number" min="0.05" max="0.85" step="0.01"></div>
+            <div class="field"><label for="internalFrictionInput">内部摩擦角 <span class="unit">deg</span></label><input id="internalFrictionInput" type="number" min="1" max="89" step="0.1"></div>
+            <div class="field"><label for="erosionCoefficientInput">侵食係数</label><input id="erosionCoefficientInput" type="number" min="0" max="1" step="0.001"></div>
+            <div class="field"><label for="depositionCoefficientInput">堆積係数</label><input id="depositionCoefficientInput" type="number" min="0" max="10" step="0.01"></div>
+            <div class="field"><label for="yieldVelocityInput">降伏型堆積速度 <span class="unit">m/s</span></label><input id="yieldVelocityInput" type="number" min="0" max="100" step="0.01"></div>
+            <div class="field"><label for="yieldCoefficientInput">降伏型堆積係数 <span class="unit">1/s</span></label><input id="yieldCoefficientInput" type="number" min="0" max="10" step="0.01"></div>
+            <div class="field full"><label for="activeLayerInput">活性層厚 <span class="unit">m</span></label><input id="activeLayerInput" type="number" min="0.000001" max="1000" step="0.01"></div>
+            <div class="field full"><p class="help">標準1Dは単一混合速度の深さ平均近似です。侵食・堆積係数は現地/実験校正が必要で、相間すべりが支配的な流れには適用しません。数値基盤: <a href="https://www.math.ntnu.no/conservation/2003/044.html" target="_blank" rel="noopener noreferrer">hydrostatic reconstruction</a>。高度モードの根拠と限界は選択時の警告を参照してください。</p></div>
           </div>
-          <div class="panel-body flush"><table class="mini-table"><thead><tr><th>粒径</th><th>直径 m</th><th>割合</th></tr></thead><tbody id="grainTableBody"></tbody></table></div>
+          <div class="panel-body flush"><table class="mini-table"><thead><tr><th>粒径</th><th>直径 m</th><th>割合</th><th>沈降 m/s</th></tr></thead><tbody id="grainTableBody"></tbody></table></div>
         </section>
 
         <section class="panel">
           <header class="panel-header"><h2>砂防ダム</h2><button type="button" class="compact ghost" id="addDamButton">追加</button></header>
           <div class="panel-body flush"><table class="mini-table"><thead><tr><th>種類</th><th>位置 m</th><th>高さ m</th><th></th></tr></thead><tbody id="damTableBody"></tbody></table></div>
+        </section>
+
+        <section class="panel">
+          <header class="panel-header"><h2>観測点</h2><button type="button" class="compact ghost" id="addObserverButton">追加</button></header>
+          <div class="panel-body"><div class="field"><label for="observationSelect">ハイドログラフ表示</label><select id="observationSelect"></select></div></div>
+          <div class="panel-body flush"><table class="mini-table"><thead><tr><th>名称</th><th>位置 m</th><th></th></tr></thead><tbody id="observerTableBody"></tbody></table></div>
         </section>
 
         <section class="panel">
@@ -327,7 +341,7 @@
           <div class="panel-body form-grid">
             <div class="field"><label for="uncertaintyMethod">手法</label><select id="uncertaintyMethod"><option value="none">無効</option><option value="ofat">一因子変化</option><option value="lhs">Latin Hypercube</option><option value="morris">Morris</option></select></div>
             <div class="field"><label for="ensembleCases">case数</label><input id="ensembleCases" type="number" min="1" max="512" step="1"></div>
-            <div class="field full"><p class="help" id="ensembleEstimate">手法とcase数を選択してください。</p></div>
+            <div class="field full"><p class="help" id="ensembleEstimate">手法とcase数を選択してください。</p><p class="help">探索範囲は基準値に対し、Manning ±30%、侵食・堆積係数 0.5～1.5倍、内部摩擦角 ±5°です。これは校正済み確率分布ではなく、Seed固定の感度探索です。分位値を確率予測として解釈しないでください。</p></div>
             <div class="field full"><div class="button-row"><button type="button" class="ghost" id="ensembleRunButton">ensemble開始</button><button type="button" class="danger" id="ensembleCancelButton" disabled>停止</button><button type="button" class="ghost" id="ensembleExportButton" disabled>ensemble.csv</button></div></div>
             <div class="field full"><p class="help" id="ensembleStatus" aria-live="polite">未実行</p></div>
           </div>
@@ -496,8 +510,8 @@ function estimateCaseBytes(c) {
   const gridCount = c.grid2d && c.grid2d.enabled ? c.grid2d.nx * c.grid2d.ny : 0;
   const oneDWorking = n * (32 + 14 * k) * 8;
   const twoDWorking = gridCount * (42 + 12 * k) * 8;
-  const frames = Math.min(LIMITS.maxFrames, Math.ceil(c.solver.duration / c.solver.outputInterval) + 1);
-  const history = frames * Math.min(n, 1200) * 6 * 8;
+  const frames = Math.min(LIMITS.maxFrames + 2, Math.ceil(c.solver.duration / c.solver.outputInterval) + 2);
+  const history = frames * (n * 6 + gridCount * 3) * 8;
   const renderAndTransfer = Math.max(n * 8 * 8, gridCount * 5 * 8) * 2;
   return Math.ceil((oneDWorking + twoDWorking + history + renderAndTransfer + 8 * 1024 * 1024) * 1.18);
 }
@@ -510,6 +524,8 @@ function validateCase(c) {
   range(c.solver.duration, "duration", 0, LIMITS.maxDuration, false, true);
   range(c.solver.outputInterval, "outputInterval", 0, c.solver.duration, false, true);
   range(c.solver.cfl, "CFL", 0.05, 0.9);
+  range(c.solver.maxDt, "maxDt", 1e-8, 10);
+  range(c.solver.estimatedMinDt, "estimatedMinDt", 1e-9, c.solver.maxDt);
   integer(c.solver.maxSteps, "maxSteps", 1, LIMITS.maxSteps);
   integer(c.solver.seed, "seed", 0, 0xffffffff);
   range(c.solver.dryDepth, "dryDepth", 1e-12, 0.1);
@@ -522,6 +538,9 @@ function validateCase(c) {
   range(c.material.internalFrictionDeg, "internalFrictionDeg", 1, 89);
   range(c.material.erosionCoefficient, "erosionCoefficient", 0, 1);
   range(c.material.depositionCoefficient, "depositionCoefficient", 0, 10);
+  range(c.material.yieldDepositionVelocity, "yieldDepositionVelocity", 0, 100);
+  range(c.material.yieldDepositionCoefficient, "yieldDepositionCoefficient", 0, 10);
+  range(c.material.activeLayerThickness, "activeLayerThickness", 1e-6, 1000);
   if (!Array.isArray(c.grains)) throw new Error("grainsが配列ではありません");
   integer(c.grains.length, "粒径数", LIMITS.minGrains, LIMITS.maxGrains);
   const grainIds = new Set();
@@ -588,9 +607,14 @@ function validateCase(c) {
     if (c.grid2d.nx * c.grid2d.ny > LIMITS.maxCells2D) throw new Error("2Dセル数が上限を超えています");
     range(c.grid2d.dx, "grid2d.dx", 0, 1e7, false, true);
     range(c.grid2d.dy, "grid2d.dy", 0, 1e7, false, true);
+    finite(c.grid2d.originX, "grid2d.originX");
+    finite(c.grid2d.originY, "grid2d.originY");
     if (!Array.isArray(c.grid2d.elevation) || c.grid2d.elevation.length !== c.grid2d.nx * c.grid2d.ny) throw new Error("2D標高配列長が不正です");
     for (const elevation of c.grid2d.elevation) finite(elevation, "2D標高");
   }
+  if (!c.uncertainty || !["none", "ofat", "lhs", "morris"].includes(c.uncertainty.method)) throw new Error("uncertainty.methodが不正です");
+  integer(c.uncertainty.cases, "uncertainty.cases", 1, LIMITS.maxEnsemble);
+  integer(c.uncertainty.seed, "uncertainty.seed", 0, 0xffffffff);
   const estimatedBytes = estimateCaseBytes(c);
   if (estimatedBytes > LIMITS.maxAppBytes) throw new Error("推定ピークメモリが384MiBを超えます");
   const minimumDx = Math.min(...c.cells1d.slice(1).map((cell, index) => cell.x - c.cells1d[index].x));
@@ -613,7 +637,7 @@ function minmod(a, b) {
   return Math.abs(a) < Math.abs(b) ? a : b;
 }
 
-function hllcFlux(hL, uL, hR, uR, gravity, dryDepth) {
+function hllFlux(hL, uL, hR, uR, gravity, dryDepth) {
   hL = hL > dryDepth ? hL : 0;
   hR = hR > dryDepth ? hR : 0;
   if (hL === 0 && hR === 0) return [0, 0];
@@ -625,29 +649,14 @@ function hllcFlux(hL, uL, hR, uR, gravity, dryDepth) {
   const fR1 = qR * uR + 0.5 * gravity * hR * hR;
   const cL = Math.sqrt(gravity * hL);
   const cR = Math.sqrt(gravity * hR);
-  const sL = Math.min(uL - cL, uR - cR);
-  const sR = Math.max(uL + cL, uR + cR);
+  const sL = hL === 0 ? uR - 2 * cR : hR === 0 ? uL - cL : Math.min(uL - cL, uR - cR);
+  const sR = hR === 0 ? uL + 2 * cL : hL === 0 ? uR + cR : Math.max(uL + cL, uR + cR);
   if (sL >= 0) return [fL0, fL1];
   if (sR <= 0) return [fR0, fR1];
-  if (hL === 0 || hR === 0) return [
+  return [
     (sR * fL0 - sL * fR0 + sL * sR * (hR - hL)) / (sR - sL),
     (sR * fL1 - sL * fR1 + sL * sR * (qR - qL)) / (sR - sL),
   ];
-  const denomStar = hR * (uR - sR) - hL * (uL - sL);
-  if (Math.abs(denomStar) < 1e-14 || Math.abs(sR - sL) < 1e-14) {
-    return [
-      (sR * fL0 - sL * fR0 + sL * sR * (hR - hL)) / (sR - sL),
-      (sR * fL1 - sL * fR1 + sL * sR * (qR - qL)) / (sR - sL),
-    ];
-  }
-  const sStar = (sR * hR * (uR - sR) - sL * hL * (uL - sL)) / denomStar;
-  if (!Number.isFinite(sStar)) throw new Error("HLLC中間波速が非有限です");
-  if (sStar >= 0) {
-    const hStar = hL * (sL - uL) / (sL - sStar);
-    return [fL0 + sL * (hStar - hL), fL1 + sL * (hStar * sStar - qL)];
-  }
-  const hStar = hR * (sR - uR) / (sR - sStar);
-  return [fR0 + sR * (hStar - hR), fR1 + sR * (hStar * sStar - qR)];
 }
 
 function mulberry32(seed) {
@@ -867,7 +876,7 @@ function eulerStage(input, c, dt, random) {
     const hRightOriginal = right.h;
     left.h = Math.max(0, left.eta - zStar);
     right.h = Math.max(0, right.eta - zStar);
-    const baseFlux = hllcFlux(left.h, left.u, right.h, right.u, G, dry);
+    const baseFlux = hllFlux(left.h, left.u, right.h, right.u, G, dry);
     const sedimentFlux = new Array(kCount);
     const upConcentration = baseFlux[0] >= 0 ? left.concentrations : right.concentrations;
     for (let k = 0; k < kCount; k++) sedimentFlux[k] = baseFlux[0] * upConcentration[k];
@@ -928,7 +937,7 @@ function eulerStage(input, c, dt, random) {
     }
     projectConcentrationToBed1D(state, i, c);
     enforceConcentration(state, i, c.material.maxConcentration);
-    applyFrictionAndMorphodynamics(state, i, c, dt);
+    applyFrictionAndMorphodynamics(state, i, c, dt, input.q[i]);
   }
   state.time = input.time + dt;
   state.steps = input.steps + 1;
@@ -1006,12 +1015,13 @@ function projectConcentrationToBed1D(state, i, c) {
   return deposit;
 }
 
-function applyFrictionAndMorphodynamics(state, i, c, dt) {
+function applyFrictionAndMorphodynamics(state, i, c, dt, referenceDischarge) {
   const h = state.h[i];
   if (h <= c.solver.dryDepth) return;
-  const u = state.q[i] / h;
-  const friction = dt * G * c.material.manning * c.material.manning * Math.abs(state.q[i]) / Math.max(Math.pow(h, 7 / 3), 1e-18);
+  const frictionReference = Number.isFinite(referenceDischarge) ? referenceDischarge : state.q[i];
+  const friction = dt * G * c.material.manning * c.material.manning * Math.abs(frictionReference) / Math.max(Math.pow(h, 7 / 3), 1e-18);
   state.q[i] /= 1 + friction;
+  const u = state.q[i] / h;
   let totalConcentration = 0;
   const offset = i * state.kCount;
   for (let k = 0; k < state.kCount; k++) totalConcentration += state.hc[offset + k] / h;
@@ -1264,6 +1274,17 @@ function eulerStage2D(input, c, dt) {
   };
   for (let iy = 0; iy < state.ny; iy++) for (let ix = 1; ix < state.nx; ix++) applyFace(iy * state.nx + ix - 1, iy * state.nx + ix, 0);
   for (let iy = 1; iy < state.ny; iy++) for (let ix = 0; ix < state.nx; ix++) applyFace((iy - 1) * state.nx + ix, iy * state.nx + ix, 1);
+  const coupledRow = c.solver.model === "coupled1d2d" ? Math.floor(state.ny / 2) : -1;
+  for (let iy = 0; iy < state.ny; iy++) {
+    const left = iy * state.nx, right = left + state.nx - 1;
+    if (iy !== coupledRow) dqx[left] += 0.5 * G * input.h[left] * input.h[left] / state.dx;
+    dqx[right] -= 0.5 * G * input.h[right] * input.h[right] / state.dx;
+  }
+  for (let ix = 0; ix < state.nx; ix++) {
+    const bottom = ix, top = (state.ny - 1) * state.nx + ix;
+    dqy[bottom] += 0.5 * G * input.h[bottom] * input.h[bottom] / state.dy;
+    dqy[top] -= 0.5 * G * input.h[top] * input.h[top] / state.dy;
+  }
   for (let i = 0; i < state.n; i++) {
     state.h[i] = input.h[i] + dt * dh[i];
     state.qx[i] = input.qx[i] + dt * dqx[i];
@@ -1350,7 +1371,7 @@ function applyCouplingFlux(oneD, twoD, c, dt) {
   const u1 = h1 > c.solver.dryDepth ? oneD.q[i] / h1 : 0;
   const u2 = h2 > c.solver.dryDepth ? twoD.qx[j] / h2 : 0;
   const zStar = Math.max(oneD.bed[i], twoD.bed[j]);
-  const flux = hllcFlux(Math.max(0, oneD.bed[i] + h1 - zStar), u1, Math.max(0, twoD.bed[j] + h2 - zStar), u2, G, c.solver.dryDepth);
+  const flux = hllFlux(Math.max(0, oneD.bed[i] + h1 - zStar), u1, Math.max(0, twoD.bed[j] + h2 - zStar), u2, G, c.solver.dryDepth);
   const faceWidth = Math.min(oneD.width[i], twoD.dy);
   let mixtureRate = flux[0] * faceWidth;
   const availableRate = mixtureRate >= 0 ? h1 * oneD.width[i] * oneD.dx[i] / dt : h2 * twoD.dx * twoD.dy / dt;
@@ -1520,7 +1541,7 @@ function cloneAdvancedState(state) {
 }
 
 function advancedFlux(left, right, c) {
-  const base = hllcFlux(left.h, left.u, right.h, right.u, G, c.solver.dryDepth);
+  const base = hllFlux(left.h, left.u, right.h, right.u, G, c.solver.dryDepth);
   const upstream = base[0] >= 0 ? left : right;
   const solid = base[0] * upstream.m;
   const transverse = base[0] * upstream.v;
@@ -1891,6 +1912,18 @@ function runCoupledTestCase(reverse = false, oblique = false) {
   return { oneD, twoD, diagnostics: combinedDiagnostics(oneD, twoD, c, balance, initialOneD, initialTwoD, maxCfl), interfaceEvaluations };
 }
 
+function run2DTestCase(c, initialize) {
+  validateCase(c);
+  let state = createState2D(c);
+  initialize(state);
+  const initial = inventory2D(state, c); let maxCfl = 0;
+  while (state.time < c.solver.duration - 1e-12) {
+    const step = computeDt2D(state, c); maxCfl = Math.max(maxCfl, step.actualCfl);
+    const first = eulerStage2D(state, c, step.dt), second = eulerStage2D(first, c, step.dt); state = averageState2D(state, second, c);
+  }
+  return { state, initial, current: inventory2D(state, c), maxCfl };
+}
+
 function runAdvancedTestCase(c, initialSolidFraction = 0.5, initialSpeed = 0.35) {
   c.solver.model = "advanced";
   let state = createAdvancedState(c, initialSolidFraction);
@@ -1923,14 +1956,14 @@ function manufacturedOrder() {
 function runSelfTests() {
   const results = [];
   try {
-    const flux = hllcFlux(1, 0, 1, 0, G, 1e-8);
-    results.push(makeTestResult("hllc-rest", "HLLC静止流束", Math.abs(flux[0]) <= 1e-14 ? "pass" : "fail", Math.abs(flux[0]), "<=1e-14", "等水深・速度0で質量流束が0"));
-  } catch (error) { results.push(makeTestResult("hllc-rest", "HLLC静止流束", "fail", "例外", "<=1e-14", error.message)); }
+    const flux = hllFlux(1, 0, 1, 0, G, 1e-8);
+    results.push(makeTestResult("hll-rest", "HLL静止流束", Math.abs(flux[0]) <= 1e-14 ? "pass" : "fail", Math.abs(flux[0]), "<=1e-14", "等水深・速度0で質量流束が0"));
+  } catch (error) { results.push(makeTestResult("hll-rest", "HLL静止流束", "fail", "例外", "<=1e-14", error.message)); }
   try {
-    const flux = hllcFlux(1, 0, 0, 0, G, 1e-8);
+    const flux = hllFlux(1, 0, 0, 0, G, 1e-8);
     const ok = flux.every(Number.isFinite) && flux[0] > 0;
-    results.push(makeTestResult("hllc-dry", "HLLC乾床境界", ok ? "pass" : "fail", flux[0], "有限かつ正", "片側乾床で有限流束"));
-  } catch (error) { results.push(makeTestResult("hllc-dry", "HLLC乾床境界", "fail", "例外", "有限", error.message)); }
+    results.push(makeTestResult("hll-dry", "HLL乾床境界", ok ? "pass" : "fail", flux[0], "有限かつ正", "片側乾床で有限流束"));
+  } catch (error) { results.push(makeTestResult("hll-dry", "HLL乾床境界", "fail", "例外", "有限", error.message)); }
   try {
     const a = mulberry32(12345), b = mulberry32(12345);
     let identical = true;
@@ -1943,6 +1976,23 @@ function runSelfTests() {
     results.push(makeTestResult("limit", "上限+1拒否", rejected ? "pass" : "fail", rejected ? "拒否" : "受理", "拒否", "1Dセル上限+1"));
   } catch (error) { results.push(makeTestResult("limit", "上限+1拒否", "fail", "例外", "拒否", error.message)); }
   try {
+    const probes = [
+      (c) => { c.solver.maxDt = NaN; },
+      (c) => { c.material.yieldDepositionCoefficient = -1; },
+      (c) => { c.uncertainty.method = "unknown"; },
+      (c) => { c.grid2d.enabled = true; c.grid2d.originX = Infinity; },
+    ];
+    let rejected = 0;
+    for (const mutate of probes) { const c = makeWorkerTestCase(); mutate(c); try { validateCase(c); } catch (_) { rejected++; } }
+    results.push(makeTestResult("worker-input-boundary", "Worker入力の独立再検証", rejected === probes.length ? "pass" : "fail", rejected + "/" + probes.length, "全拒否", "NaN・負係数・未知手法・無限座標"));
+  } catch (error) { results.push(makeTestResult("worker-input-boundary", "Worker入力の独立再検証", "fail", "例外", "全拒否", error.message)); }
+  try {
+    const c = makeWorkerTestCase({ duration: 2000 });
+    c.solver.outputInterval = 1; c.grid2d = Object.assign({}, c.grid2d, { enabled: true, nx: 512, ny: 512 });
+    const estimate = estimateCaseBytes(c);
+    results.push(makeTestResult("memory-2d-history", "2D履歴込みメモリ見積り", estimate > LIMITS.maxAppBytes ? "pass" : "fail", estimate, ">384MiBで拒否", "512×512×2002 frameの3配列履歴"));
+  } catch (error) { results.push(makeTestResult("memory-2d-history", "2D履歴込みメモリ見積り", "fail", "例外", ">384MiB", error.message)); }
+  try {
     const eta = 2.5;
     const c = makeWorkerTestCase({ duration: 0.25, bed: (x) => 0.25 * Math.sin(x * 0.37) + 0.08 * Math.cos(x * 0.91), depth: (x, i, n, bed) => eta - bed });
     const result = runWorkerTestCase(c);
@@ -1952,6 +2002,21 @@ function runSelfTests() {
     results.push(makeTestResult("lake-rest", "不規則河床の静水保持", value <= 1e-10 ? "pass" : "fail", value, "<=1e-10", "閉境界・完全湿潤"));
   } catch (error) { results.push(makeTestResult("lake-rest", "不規則河床の静水保持", "fail", "例外", "<=1e-10", error.message)); }
   try {
+    const eta = 0.65;
+    const c = makeWorkerTestCase({ n: 161, dx: 0.25, duration: 0.3, maxDt: 0.001,
+      bed: (x) => 0.18 + 0.62 * Math.exp(-Math.pow((x - 12) / 1.4, 2)) + 0.68 * Math.exp(-Math.pow((x - 28) / 1.6, 2)),
+      depth: (x, i, n, bed) => Math.max(0, eta - bed) });
+    const initialWet = c.cells1d.map((cell) => cell.initialDepth > c.solver.dryDepth), result = runWorkerTestCase(c);
+    let maskChanges = 0, maxVelocity = 0, maxWetEtaError = 0;
+    for (let i = 0; i < result.state.n; i++) {
+      const wet = result.state.h[i] > c.solver.dryDepth;
+      if (wet !== initialWet[i]) maskChanges++;
+      if (wet) { maxVelocity = Math.max(maxVelocity, Math.abs(result.state.q[i] / result.state.h[i])); maxWetEtaError = Math.max(maxWetEtaError, Math.abs(result.state.bed[i] + result.state.h[i] - eta)); }
+    }
+    const value = Math.max(maxVelocity, maxWetEtaError);
+    results.push(makeTestResult("lake-rest-dry-islands", "複数乾燥島を含む静水保持", maskChanges === 0 && value <= 1e-9 ? "pass" : "fail", value, "速度・水位誤差<=1e-9・mask不変", "2乾燥島; mask変化=" + maskChanges));
+  } catch (error) { results.push(makeTestResult("lake-rest-dry-islands", "複数乾燥島を含む静水保持", "fail", "例外", "<=1e-9・mask不変", error.message)); }
+  try {
     const c = makeWorkerTestCase({ duration: 0.3, maxDt: 0.0025, depth: (x, i, n) => i < n / 2 ? 1 : 0 });
     const result = runWorkerTestCase(c);
     const inventoryNow = inventory(result.state, c);
@@ -1960,14 +2025,28 @@ function runSelfTests() {
     results.push(makeTestResult("dry-dam-break", "乾床ダムブレーク", physical && relative <= 1e-10 ? "pass" : "fail", relative, "保存<=1e-10", "濡れ乾き・正値"));
   } catch (error) { results.push(makeTestResult("dry-dam-break", "乾床ダムブレーク", "fail", "例外", "保存<=1e-10", error.message)); }
   try {
-    let maxError = 0, physical = true;
-    for (const n of [41, 81, 161, 321]) {
-      const c = makeWorkerTestCase({ n, dx: 40 / (n - 1), duration: 0.08, maxDt: 0.001, depth: (x, i) => i < (n - 1) / 2 ? 1 : 0 });
-      const result = runWorkerTestCase(c), now = inventory(result.state, c), error = Math.abs(now.water - result.initialInventory.water) / result.initialInventory.water;
-      maxError = Math.max(maxError, error); physical = physical && result.diagnostics.minDepth >= -1e-12 && result.diagnostics.maxCfl <= c.solver.cfl + 1e-12;
+    const duration = 0.8, x0 = 20, h0 = 1, wave = Math.sqrt(G * h0), errors = [], spacings = [], frontErrors = [], conservation = [];
+    let physical = true;
+    for (const n of [101, 201, 401, 801]) {
+      const dx = 40 / (n - 1), c = makeWorkerTestCase({ n, dx, duration, maxDt: 0.01, depth: (x) => x < x0 ? h0 : 0 });
+      c.solver.dryDepth = 1e-12;
+      const result = runWorkerTestCase(c), now = inventory(result.state, c);
+      let l1 = 0, referenceNorm = 0, numericalFront = x0;
+      for (let i = 0; i < result.state.n; i++) {
+        const x = result.state.x[i], xi = (x - x0) / duration;
+        const reference = xi <= -wave ? h0 : xi >= 2 * wave ? 0 : Math.pow((2 * wave - xi) / 3, 2) / G;
+        l1 += Math.abs(result.state.h[i] - reference) * dx; referenceNorm += reference * dx;
+        if (result.state.h[i] > c.solver.dryDepth) numericalFront = x;
+      }
+      errors.push(l1 / Math.max(referenceNorm, 1e-12)); spacings.push(dx); frontErrors.push(Math.abs(numericalFront - (x0 + 2 * wave * duration)) / dx);
+      conservation.push(Math.abs(now.water - result.initialInventory.water) / result.initialInventory.water);
+      physical = physical && result.diagnostics.minDepth >= -1e-12 && result.diagnostics.maxCfl <= c.solver.cfl + 1e-12;
     }
-    results.push(makeTestResult("dry-dam-break-four-grids", "乾床ダムブレーク4格子", physical && maxError <= 1e-10 ? "pass" : "fail", maxError, "保存<=1e-10", "41・81・161・321 cells"));
-  } catch (error) { results.push(makeTestResult("dry-dam-break-four-grids", "乾床ダムブレーク4格子", "fail", "例外", "保存<=1e-10", error.message)); }
+    const orders = errors.slice(1).map((value, index) => Math.log(errors[index] / value) / Math.log(spacings[index] / spacings[index + 1]));
+    const observedOrder = Math.min(...orders), finestError = errors[errors.length - 1], finestFront = frontErrors[frontErrors.length - 1], maxConservation = Math.max(...conservation);
+    const passed = physical && finestError <= 0.02 && finestFront <= 2 && observedOrder >= 0.8 && maxConservation <= 1e-8;
+    results.push(makeTestResult("dry-dam-break-four-grids", "Ritter乾床ダムブレーク4格子", passed ? "pass" : "fail", Math.max(finestError, maxConservation), "L1<=2%・先端<=2dx・次数>=0.8・保存<=1e-8", "101/201/401/801 cells; p=" + observedOrder.toFixed(3) + "; front=" + finestFront.toFixed(2) + "dx"));
+  } catch (error) { results.push(makeTestResult("dry-dam-break-four-grids", "Ritter乾床ダムブレーク4格子", "fail", "例外", "L1<=2%・先端<=2dx・次数>=0.8", error.message)); }
   try {
     const center = 20, eta = 0.72;
     const c = makeWorkerTestCase({ n: 101, dx: 0.4, duration: 0.6, maxDt: 0.002, bed: (x) => 0.0045 * Math.pow(x - center, 2), depth: (x, i, n, bed) => Math.max(0, eta - bed) });
@@ -1977,16 +2056,40 @@ function runSelfTests() {
     results.push(makeTestResult("moving-shoreline", "放物面上の移動汀線", changed > 0 && result.diagnostics.minDepth >= -1e-12 && error <= 1e-8 ? "pass" : "fail", error, "保存<=1e-8・wet mask変化", changed + " cellsで乾湿状態変化"));
   } catch (error) { results.push(makeTestResult("moving-shoreline", "放物面上の移動汀線", "fail", "例外", "保存<=1e-8", error.message)); }
   try {
-    const c = makeWorkerTestCase({ duration: 0.4, bed: (x) => -0.01 * x, depth: () => 0.7, manning: 0.03 });
-    const result = runWorkerTestCase(c, 0.4);
-    let finiteState = true;
-    for (let i = 0; i < result.state.n; i++) finiteState = finiteState && Number.isFinite(result.state.h[i]) && Number.isFinite(result.state.q[i]) && result.state.h[i] >= 0;
-    results.push(makeTestResult("uniform-flow", "定常等流の安定性", finiteState && result.diagnostics.maxCfl <= c.solver.cfl + 1e-12 ? "pass" : "fail", result.diagnostics.maxCfl, "CFL<=0.35", "Manning半陰解法"));
-  } catch (error) { results.push(makeTestResult("uniform-flow", "定常等流の安定性", "fail", "例外", "有限・正値", error.message)); }
+    const slope = 0.005, manning = 0.03, unitDischarge = 0.5, normalDepth = Math.pow(manning * unitDischarge / Math.sqrt(slope), 3 / 5), velocity = unitDischarge / normalDepth;
+    const c = makeWorkerTestCase({ n: 41, duration: 0.1, maxDt: 0.0001, bed: (x) => -slope * x, depth: () => normalDepth, manning, inflow: unitDischarge, left: "inflow", right: "open" });
+    c.solver.estimatedMinDt = 0.0001; c.solver.maxSteps = 1000000;
+    const result = runWorkerTestCase(c, velocity);
+    let depthError = 0, dischargeError = 0, residual = 0;
+    for (let i = 5; i < result.state.n - 5; i++) {
+      depthError = Math.max(depthError, Math.abs(result.state.h[i] - normalDepth) / normalDepth);
+      dischargeError = Math.max(dischargeError, Math.abs(result.state.q[i] - unitDischarge) / unitDischarge);
+      residual = Math.max(residual, Math.abs(result.state.q[i] - unitDischarge) / Math.max(1, result.state.steps));
+    }
+    const passed = depthError <= 0.01 && dischargeError <= 0.005 && residual <= 1e-8 && result.diagnostics.maxCfl <= c.solver.cfl + 1e-12;
+    results.push(makeTestResult("uniform-flow", "Manning定常等流の定量誤差", passed ? "pass" : "fail", Math.max(depthError, dischargeError), "水深<=1%・流量<=0.5%・残差<=1e-8/step", "h_n=" + normalDepth.toFixed(4) + "m; residual=" + residual.toExponential(2)));
+  } catch (error) { results.push(makeTestResult("uniform-flow", "Manning定常等流の定量誤差", "fail", "例外", "水深<=1%・流量<=0.5%", error.message)); }
   try {
     const order = manufacturedOrder();
-    results.push(makeTestResult("manufactured-order", "滑らかな製造解のMUSCL収束", order >= 1.7 ? "pass" : "fail", order, ">=1.7", "sin波の界面再構成L1"));
-  } catch (error) { results.push(makeTestResult("manufactured-order", "滑らかな製造解のMUSCL収束", "fail", "例外", ">=1.7", error.message)); }
+    results.push(makeTestResult("reconstruction-order", "MUSCL界面再構成の格子収束", order >= 1.7 ? "pass" : "fail", order, ">=1.7", "sin波の界面再構成L1（PDE解ではない）"));
+  } catch (error) { results.push(makeTestResult("reconstruction-order", "MUSCL界面再構成の格子収束", "fail", "例外", ">=1.7", error.message)); }
+  try {
+    const length = 10, baseDepth = 1, amplitude = 1e-4, duration = 0.2, waveSpeed = Math.sqrt(G * baseDepth), errors = [], spacings = [];
+    for (const n of [40, 80, 160]) {
+      const dx = length / n, waveNumber = Math.PI / length;
+      const c = makeWorkerTestCase({ n, dx, duration, maxDt: 1, depth: (x) => baseDepth + amplitude * Math.cos(waveNumber * (x + 0.5 * dx)) });
+      const result = runWorkerTestCase(c); let l1 = 0;
+      for (let i = 0; i < n; i++) {
+        const center = result.state.x[i] + 0.5 * dx;
+        const reference = baseDepth + amplitude * Math.cos(waveNumber * center) * Math.cos(waveSpeed * waveNumber * duration);
+        l1 += Math.abs(result.state.h[i] - reference) / (amplitude * n);
+      }
+      errors.push(l1); spacings.push(dx);
+    }
+    const orders = [Math.log(errors[0] / errors[1]) / Math.log(spacings[0] / spacings[1]), Math.log(errors[1] / errors[2]) / Math.log(spacings[1] / spacings[2])];
+    const order = Math.min(...orders), finest = errors[2];
+    results.push(makeTestResult("linear-standing-wave", "線形浅水定在波の3格子収束", order >= 1.5 && finest <= 0.01 ? "pass" : "fail", finest, "正規化L1<=1%・次数>=1.5", "40/80/160 cells; p=" + order.toFixed(3)));
+  } catch (error) { results.push(makeTestResult("linear-standing-wave", "線形浅水定在波の3格子収束", "fail", "例外", "L1<=1%・次数>=1.5", error.message)); }
   try {
     const c = makeWorkerTestCase({ duration: 0.3, bed: (x) => -0.04 * x, depth: () => 0.8, erosionCoefficient: 0.02, depositionCoefficient: 0.04 });
     const result = runWorkerTestCase(c, 0.6, [0.08, 0.04]);
@@ -2031,6 +2134,18 @@ function runSelfTests() {
     } catch (error) { results.push(makeTestResult("dam-" + type, "構造物保存: " + type, "fail", "例外", "<=1e-8", error.message)); }
   }
   try {
+    const c = makeWorkerTestCase({ duration: 0.01, n: 5 }), flux = [1.7, 3.2], sediment = [0.17, 0.08];
+    const left = { h: 1.2, u: 0.8, eta: 1.2, bed: 0, width: 2, concentrations: [0.1, 0.05] };
+    const right = { h: 0.2, u: 0, eta: 0.2, bed: 0, width: 2, concentrations: [0, 0] };
+    const base = { id: "unit", type: "impermeable", x: 2, height: 0.3, dischargeCoefficient: 0.58, slotWidth: 0, barSpacing: 0, blockageProbability: 0, remobilizationShear: 1e9, sedimentCapacity: 1e6, captured: new Float64Array(2), blockage: 0 };
+    const pass = limitByStructure(flux, sediment, null, left, right, c, 0.01, 2, mulberry32(1));
+    const limited = limitByStructure(flux, sediment, Object.assign({}, base, { captured: new Float64Array(2) }), left, right, c, 0.01, 2, mulberry32(1));
+    const blocked = limitByStructure(flux, sediment, Object.assign({}, base, { height: 5, captured: new Float64Array(2) }), left, right, c, 0.01, 2, mulberry32(1));
+    const expected = Math.min(flux[0], base.dischargeCoefficient * Math.sqrt(2 * G) * Math.pow(left.eta - base.height, 1.5));
+    const error = Math.max(Math.abs(pass.flux[0] - flux[0]), Math.abs(limited.flux[0] - expected), Math.abs(blocked.flux[0]));
+    results.push(makeTestResult("dam-limit-extremes", "ダム限流式・極端条件", error <= 1e-12 ? "pass" : "fail", error, "<=1e-12", "構造物なし=透過・堰公式一致・高天端=遮断"));
+  } catch (error) { results.push(makeTestResult("dam-limit-extremes", "ダム限流式・極端条件", "fail", "例外", "<=1e-12", error.message)); }
+  try {
     const base = { height: 0.2, dischargeCoefficient: 0.58, slotWidth: 0.35, barSpacing: 0.06, blockageProbability: 0.04, remobilizationShear: 500, sedimentCapacity: 4 };
     const structures = [["impermeable", 10], ["slit", 20], ["grid", 30]].map(([type, x], index) => Object.assign({ id: "d" + index, type, x }, base));
     const c = makeWorkerTestCase({ duration: 0.3, structures, bed: (x) => -0.004 * x, depth: () => 0.7, seed: 99 });
@@ -2043,9 +2158,9 @@ function runSelfTests() {
   try {
     const c = makeWorkerTestCase({ duration: 0.01, n: 5 });
     const left = { h: 0.8, u: 0.3, v: 0, m: 0, pb: c.material.fluidDensity * G * 0.8 }, right = { h: 0.5, u: -0.1, v: 0, m: 0, pb: c.material.fluidDensity * G * 0.5 };
-    const advanced = advancedFlux(left, right, c), shallow = hllcFlux(left.h, left.u, right.h, right.u, G, c.solver.dryDepth);
+    const advanced = advancedFlux(left, right, c), shallow = hllFlux(left.h, left.u, right.h, right.u, G, c.solver.dryDepth);
     const errorValue = Math.max(Math.abs(advanced.mixture - shallow[0]), Math.abs(advanced.momentumX - shallow[1]), Math.abs(advanced.solid), Math.abs(advanced.momentumY));
-    results.push(makeTestResult("advanced-clear-water", "五方程式の浅水流退化", errorValue <= 1e-14 ? "pass" : "fail", errorValue, "<=1e-14", "固相率0でHLLC質量・運動量流束と一致"));
+    results.push(makeTestResult("advanced-clear-water", "五方程式の浅水流退化", errorValue <= 1e-14 ? "pass" : "fail", errorValue, "<=1e-14", "固相率0でHLL質量・運動量流束と一致"));
   } catch (error) { results.push(makeTestResult("advanced-clear-water", "五方程式の浅水流退化", "fail", "例外", "<=1e-14", error.message)); }
   try {
     const c = makeWorkerTestCase({ duration: 0.06, n: 9, maxDt: 0.001, bed: (x) => -0.01 * x, erosionCoefficient: 0.02, depositionCoefficient: 0.01, seed: 321 });
@@ -2086,6 +2201,31 @@ function runSelfTests() {
     const errorValue = Math.max(relative(before.mixture, after.mixture), relative(before.momentumX, after.momentumX), ...before.solids.map((value, k) => relative(value, after.solids[k])));
     results.push(makeTestResult("coupled-interface-conservation", "共有界面の直接保存", errorValue <= 1e-12 ? "pass" : "fail", errorValue, "<=1e-12", "水・x運動量・各粒径を界面前後で比較"));
   } catch (error) { results.push(makeTestResult("coupled-interface-conservation", "共有界面の直接保存", "fail", "例外", "<=1e-12", error.message)); }
+  try {
+    const c = makeWorkerTestCase({ duration: 0.15, maxDt: 0.002 });
+    const nx = 24, ny = 18, eta = 2.1;
+    c.grid2d = { enabled: true, nx, ny, dx: 0.7, dy: 1.1, originX: 0, originY: 0, elevation: Array.from({ length: nx * ny }, (_, index) => { const ix = index % nx, iy = Math.floor(index / nx); return 0.18 * Math.sin(ix * 0.41) + 0.11 * Math.cos(iy * 0.57); }) };
+    const result = run2DTestCase(c, (state) => { for (let i = 0; i < state.n; i++) state.h[i] = eta - state.bed[i]; });
+    let maxVelocity = 0, maxEtaError = 0;
+    for (let i = 0; i < result.state.n; i++) { maxVelocity = Math.max(maxVelocity, Math.hypot(result.state.qx[i], result.state.qy[i]) / result.state.h[i]); maxEtaError = Math.max(maxEtaError, Math.abs(result.state.bed[i] + result.state.h[i] - eta)); }
+    const conservation = Math.abs(result.current.water - result.initial.water) / result.initial.water, value = Math.max(maxVelocity, maxEtaError, conservation);
+    results.push(makeTestResult("two-d-lake-rest", "2D不規則地形の静水保持", value <= 1e-9 ? "pass" : "fail", value, "速度・水位・保存<=1e-9", "24×18・全外周反射壁"));
+  } catch (error) { results.push(makeTestResult("two-d-lake-rest", "2D不規則地形の静水保持", "fail", "例外", "<=1e-9", error.message)); }
+  try {
+    const c = makeWorkerTestCase({ duration: 0.4, maxDt: 0.01 }), nx = 101, ny = 5, dx = 0.4, x0 = 20, h0 = 1, wave = Math.sqrt(G * h0);
+    c.solver.dryDepth = 1e-12;
+    c.grid2d = { enabled: true, nx, ny, dx, dy: 0.6, originX: 0, originY: 0, elevation: new Array(nx * ny).fill(0) };
+    const result = run2DTestCase(c, (state) => { for (let iy = 0; iy < ny; iy++) for (let ix = 0; ix < nx; ix++) state.h[iy * nx + ix] = ix * dx < x0 ? h0 : 0; });
+    let l1 = 0, referenceNorm = 0, transverseError = 0;
+    for (let ix = 0; ix < nx; ix++) {
+      const xi = (ix * dx - x0) / c.solver.duration, reference = xi <= -wave ? h0 : xi >= 2 * wave ? 0 : Math.pow((2 * wave - xi) / 3, 2) / G;
+      l1 += Math.abs(result.state.h[ix] - reference) * dx; referenceNorm += reference * dx;
+      for (let iy = 1; iy < ny; iy++) transverseError = Math.max(transverseError, Math.abs(result.state.h[iy * nx + ix] - result.state.h[ix]), Math.abs(result.state.qy[iy * nx + ix]));
+    }
+    const normalized = l1 / referenceNorm, conservation = Math.abs(result.current.water - result.initial.water) / result.initial.water;
+    const passed = normalized <= 0.05 && transverseError <= 1e-12 && conservation <= 1e-8 && result.current.minDepth >= -1e-12;
+    results.push(makeTestResult("two-d-ritter", "2D横断一様Ritterダムブレーク", passed ? "pass" : "fail", Math.max(normalized, transverseError, conservation), "L1<=5%・横断差<=1e-12・保存<=1e-8", "101×5・解析水深と直接比較"));
+  } catch (error) { results.push(makeTestResult("two-d-ritter", "2D横断一様Ritterダムブレーク", "fail", "例外", "L1<=5%・保存<=1e-8", error.message)); }
   return results;
 }
 
@@ -2316,7 +2456,7 @@ window.DFDS = (() => {
       const resolution = 40075016.68557849 * Math.cos(latitude * Math.PI / 180) / Math.pow(2, dataset.zoom) / 256;
       return {
         grid: { enabled: true, nx: 256, ny: 256, dx: resolution, dy: resolution, originX: 0, originY: 0, elevation },
-        provenance: { id: "gsi-dem", key: "terrain", value: dataset.title + " z=" + dataset.zoom + " x=" + tile.x + " y=" + tile.y + "; fetched=" + new Date().toISOString() + "; missing=" + missing + "; source=国土地理院" },
+        provenance: { id: "gsi-dem", key: "terrain", value: dataset.title + " z=" + dataset.zoom + " x=" + tile.x + " y=" + tile.y + "; fetched=" + new Date().toISOString() + "; missing=" + missing + "; interpolation=" + (missing ? "iterative four-neighbor mean" : "none") + "; requested_origin_wgs84=" + latitude + "," + longitude + "; local_grid_origin_m=0,0; source=国土地理院" },
         dataset: dataset.title, url, missing, missingRatio,
       };
     }
@@ -2388,10 +2528,10 @@ window.DFDS = (() => {
     const n = c.cells1d.length;
     const k = c.grains.length;
     const gridCount = c.grid2d && c.grid2d.enabled ? c.grid2d.nx * c.grid2d.ny : 0;
-    const frames = Math.min(LIMITS.maxFrames, Math.ceil(c.solver.duration / c.solver.outputInterval) + 1);
+    const frames = Math.min(LIMITS.maxFrames + 2, Math.ceil(c.solver.duration / c.solver.outputInterval) + 2);
     const oneD = n * (32 + 14 * k) * 8;
     const twoD = gridCount * (42 + 12 * k) * 8;
-    const history = frames * Math.min(n, 1200) * 6 * 8;
+    const history = frames * (n * 6 + gridCount * 3) * 8;
     const transfer = Math.max(n * 8 * 8, gridCount * 5 * 8) * 2;
     return Math.ceil((oneD + twoD + history + transfer + 8 * 1024 * 1024) * 1.18);
   }
@@ -2518,6 +2658,10 @@ window.DFDS = (() => {
       check(() => assertFinite(c.grid2d.nx, "2D nx", 2, 4096, true));
       check(() => assertFinite(c.grid2d.ny, "2D ny", 2, 4096, true));
       if (c.grid2d.nx * c.grid2d.ny > LIMITS.maxCells2D) errors.push("2Dセル数が上限を超えています");
+      check(() => assertFinite(c.grid2d.dx, "2D dx", 1e-9, 1e7));
+      check(() => assertFinite(c.grid2d.dy, "2D dy", 1e-9, 1e7));
+      check(() => assertFinite(c.grid2d.originX, "2D originX"));
+      check(() => assertFinite(c.grid2d.originY, "2D originY"));
       if (c.grid2d.elevation.length !== c.grid2d.nx * c.grid2d.ny) errors.push("2D標高配列長が一致しません");
       for (const value of c.grid2d.elevation) if (!Number.isFinite(value)) { errors.push("2D標高に非有限値があります"); break; }
     }
@@ -2747,12 +2891,19 @@ window.DFDS = (() => {
     return validateCase(c);
   }
 
-  function validateWorkerMessage(message, activeRequestId, expectedProfileLength) {
+  function validateWorkerMessage(message, activeRequestId, expectedProfileLength, requestType = "") {
     if (!message || typeof message !== "object" || Array.isArray(message)) throw new ValidationError("Worker応答がobjectではありません");
     if (message.protocolVersion !== PROTOCOL_VERSION) throw new ValidationError("Worker protocol versionが一致しません");
     if (typeof message.requestId !== "string" || !message.requestId) throw new ValidationError("Worker requestIdが不正です");
     if (activeRequestId && message.requestId !== activeRequestId) return { stale: true };
     if (!["ready", "progress", "frame", "checkpoint", "complete", "error"].includes(message.type)) throw new ValidationError("Worker応答typeが未知です");
+    const finiteNumber = (value, name, minimum = -Infinity, maximum = Infinity, integer = false) => {
+      if (typeof value !== "number" || !Number.isFinite(value) || value < minimum || value > maximum || (integer && !Number.isInteger(value))) throw new ValidationError("Worker " + name + "が不正です");
+    };
+    if (message.type === "ready") {
+      if (!message.limits || typeof message.limits !== "object") throw new ValidationError("Worker limitsがありません");
+      for (const key of ["maxCells1D", "maxCells2D", "maxGrains", "maxFrames", "maxSteps", "maxEnsemble", "maxAppBytes"]) finiteNumber(message.limits[key], "limits." + key, 1, Number.MAX_SAFE_INTEGER, true);
+    }
     if (message.type === "frame") {
       const n = message.lengths && message.lengths.profile;
       if (!Number.isInteger(n) || n < 3 || n > LIMITS.maxCells1D || (expectedProfileLength && n !== expectedProfileLength)) throw new ValidationError("Worker profile長が不正です");
@@ -2783,8 +2934,31 @@ window.DFDS = (() => {
       }
       if (message.diagnostics.minDepth < -1e-10 || message.diagnostics.maxConcentration < -1e-12 || message.diagnostics.maxConcentration > 1 + 1e-12) throw new ValidationError("Worker診断値が物理範囲外です");
     }
-    if (message.type === "progress" && message.progress !== undefined && (!Number.isFinite(message.progress) || message.progress < 0 || message.progress > 1)) throw new ValidationError("Worker progressが範囲外です");
-    if (message.type === "error" && typeof message.message !== "string") throw new ValidationError("Worker error messageが不正です");
+    if (message.type === "progress") {
+      if (message.progress !== undefined) finiteNumber(message.progress, "progress", 0, 1);
+      if (message.time !== undefined) finiteNumber(message.time, "progress.time", 0);
+      if (message.steps !== undefined) finiteNumber(message.steps, "progress.steps", 0, Number.MAX_SAFE_INTEGER, true);
+      if (message.acknowledged !== undefined && !["pause", "resume", "cancel"].includes(message.acknowledged)) throw new ValidationError("Worker acknowledgedが不正です");
+    }
+    if (message.type === "checkpoint") {
+      if (!message.checkpoint || typeof message.checkpoint !== "object") throw new ValidationError("Worker checkpointが不正です");
+      finiteNumber(message.checkpoint.time, "checkpoint.time", 0);
+      finiteNumber(message.checkpoint.steps, "checkpoint.steps", 0, Number.MAX_SAFE_INTEGER, true);
+    }
+    if (message.type === "complete") {
+      if (requestType === "run" || message.summary !== undefined) {
+        const summary = message.summary;
+        if (!summary || typeof summary !== "object") throw new ValidationError("Worker complete summaryがありません");
+        for (const key of ["time", "waterError", "sedimentError", "minDepth", "maxConcentration", "maxCfl"]) finiteNumber(summary[key], "summary." + key, key === "minDepth" ? -1e-10 : 0);
+        finiteNumber(summary.steps, "summary.steps", 0, LIMITS.maxSteps, true);
+        finiteNumber(summary.frameCount, "summary.frameCount", 1, LIMITS.maxFrames + 2, true);
+        if (summary.maxConcentration > 1 + 1e-12) throw new ValidationError("Worker summary濃度が範囲外です");
+      } else if (requestType === "validate" || message.tests !== undefined) {
+        if (!Array.isArray(message.tests) || message.tests.length < 1 || message.tests.length > 200) throw new ValidationError("Worker testsが不正です");
+        for (const result of message.tests) if (!result || typeof result.id !== "string" || typeof result.title !== "string" || !["pass", "fail", "skip"].includes(result.status)) throw new ValidationError("Worker test結果が不正です");
+      }
+    }
+    if (message.type === "error" && (typeof message.message !== "string" || typeof message.code !== "string")) throw new ValidationError("Worker error messageが不正です");
     return { stale: false };
   }
 
@@ -2812,7 +2986,7 @@ window.DFDS = (() => {
       const request = message && this.requests.get(message.requestId);
       if (!request) return;
       try {
-        const status = validateWorkerMessage(message, message.requestId, request.expectedProfileLength);
+        const status = validateWorkerMessage(message, message.requestId, request.expectedProfileLength, request.type);
         if (status.stale) return;
         if (message.type === "frame" && request.onFrame) request.onFrame(message);
         else if (message.type === "progress" && request.onProgress) request.onProgress(message);
@@ -2874,7 +3048,7 @@ window.DFDS = (() => {
   const bytes = (value) => value < 1024 * 1024 ? format(value / 1024, 1) + " KiB" : format(value / (1024 * 1024), 1) + " MiB";
   const dom = Object.fromEntries([
     "runState", "caseHash", "caseName", "modelMode", "experimentalNotice", "durationInput", "outputIntervalInput", "cflInput", "seedInput", "computeEstimate",
-    "manningInput", "porosityInput", "fluidDensityInput", "solidDensityInput", "geometryMeta", "grainTableBody", "damTableBody", "progressBar",
+    "manningInput", "porosityInput", "fluidDensityInput", "solidDensityInput", "maxConcentrationInput", "internalFrictionInput", "erosionCoefficientInput", "depositionCoefficientInput", "yieldVelocityInput", "yieldCoefficientInput", "activeLayerInput", "geometryMeta", "grainTableBody", "damTableBody", "observerTableBody", "observationSelect", "progressBar",
     "profileCanvas", "terrainCanvas", "hydrographCanvas", "massCanvas", "validationList", "timelineRange", "timelineCurrent", "timelineEnd",
     "metricTime", "metricSteps", "metricWaterError", "metricSedimentError", "metricMinDepth", "metricCfl", "diagnosticCount", "diagnosticSummary",
     "statusLog", "reproHash", "reproFrames", "workerState", "workspace", "csvFileInput", "importDialog", "importFileMeta", "importSummary",
@@ -3063,6 +3237,13 @@ window.DFDS = (() => {
     inputNumber("porosityInput", c.material.porosity);
     inputNumber("fluidDensityInput", c.material.fluidDensity);
     inputNumber("solidDensityInput", c.material.solidDensity);
+    inputNumber("maxConcentrationInput", c.material.maxConcentration);
+    inputNumber("internalFrictionInput", c.material.internalFrictionDeg);
+    inputNumber("erosionCoefficientInput", c.material.erosionCoefficient);
+    inputNumber("depositionCoefficientInput", c.material.depositionCoefficient);
+    inputNumber("yieldVelocityInput", c.material.yieldDepositionVelocity);
+    inputNumber("yieldCoefficientInput", c.material.yieldDepositionCoefficient);
+    inputNumber("activeLayerInput", c.material.activeLayerThickness);
     dom.uncertaintyMethod.value = c.uncertainty.method;
     inputNumber("ensembleCases", c.uncertainty.cases);
     dom.experimentalNotice.classList.toggle("hidden", c.solver.model !== "advanced");
@@ -3071,6 +3252,7 @@ window.DFDS = (() => {
     text(dom.terrainSourceMeta, terrainProvenance ? (terrainProvenance.id === "gsi-dem" ? "GSI DEM" : "ローカル生成") : "CSV / 既定");
     renderGrains(c);
     renderDams(c);
+    renderObservers(c);
   }
 
   function makeNumericCell(value, min, max, step, onChange, accessibleName) {
@@ -3094,7 +3276,8 @@ window.DFDS = (() => {
       name.textContent = grain.id;
       row.append(name,
         makeNumericCell(grain.diameter, 0.000001, 10, 0.001, (value) => updateNested("grain", index, "diameter", value), grain.id + " 直径 m"),
-        makeNumericCell(grain.fraction, 0, 1, 0.01, (value) => updateNested("grain", index, "fraction", value), grain.id + " 割合"));
+        makeNumericCell(grain.fraction, 0, 1, 0.01, (value) => updateNested("grain", index, "fraction", value), grain.id + " 割合"),
+        makeNumericCell(grain.settlingVelocity, 0, 100, 0.01, (value) => updateNested("grain", index, "settlingVelocity", value), grain.id + " 沈降速度 m/s"));
       return row;
     });
     dom.grainTableBody.replaceChildren(...rows);
@@ -3140,9 +3323,26 @@ window.DFDS = (() => {
     dom.damTableBody.replaceChildren(...rows);
   }
 
+  function renderObservers(c) {
+    const selected = dom.observationSelect.value;
+    const options = c.observers.map((observer) => {
+      const option = document.createElement("option"); option.value = observer.id; option.textContent = observer.name + " (" + format(observer.x, 1) + " m)"; return option;
+    });
+    if (!options.length) { const option = document.createElement("option"); option.value = "downstream"; option.textContent = "下流端"; options.push(option); }
+    dom.observationSelect.replaceChildren(...options);
+    if (options.some((option) => option.value === selected)) dom.observationSelect.value = selected;
+    const rows = c.observers.map((observer, index) => {
+      const row = document.createElement("tr"), nameCell = document.createElement("td"), positionCell = makeNumericCell(observer.x, c.cells1d[0].x, c.cells1d[c.cells1d.length - 1].x, 1, (value) => updateNested("observer", index, "x", value), observer.id + " 位置 m"), removeCell = document.createElement("td");
+      const name = document.createElement("input"); name.value = observer.name; name.maxLength = 120; name.setAttribute("aria-label", observer.id + " 名称"); name.addEventListener("change", () => updateNested("observer", index, "name", name.value)); nameCell.append(name);
+      const remove = document.createElement("button"); remove.type = "button"; remove.className = "compact ghost"; remove.textContent = "削除"; remove.setAttribute("aria-label", observer.id + "を削除"); remove.addEventListener("click", () => { const next = D.clone(store.get().rawCase); next.observers.splice(index, 1); applyEditedCase(next, "観測点を削除しました"); }); removeCell.append(remove);
+      row.append(nameCell, positionCell, removeCell); return row;
+    });
+    dom.observerTableBody.replaceChildren(...rows);
+  }
+
   function updateNested(kind, index, key, value) {
     const next = D.clone(store.get().rawCase);
-    (kind === "grain" ? next.grains : next.structures)[index][key] = value;
+    (kind === "grain" ? next.grains : kind === "dam" ? next.structures : next.observers)[index][key] = value;
     applyEditedCase(next);
   }
 
@@ -3158,6 +3358,13 @@ window.DFDS = (() => {
     next.material.porosity = Number(dom.porosityInput.value);
     next.material.fluidDensity = Number(dom.fluidDensityInput.value);
     next.material.solidDensity = Number(dom.solidDensityInput.value);
+    next.material.maxConcentration = Number(dom.maxConcentrationInput.value);
+    next.material.internalFrictionDeg = Number(dom.internalFrictionInput.value);
+    next.material.erosionCoefficient = Number(dom.erosionCoefficientInput.value);
+    next.material.depositionCoefficient = Number(dom.depositionCoefficientInput.value);
+    next.material.yieldDepositionVelocity = Number(dom.yieldVelocityInput.value);
+    next.material.yieldDepositionCoefficient = Number(dom.yieldCoefficientInput.value);
+    next.material.activeLayerThickness = Number(dom.activeLayerInput.value);
     next.uncertainty.method = dom.uncertaintyMethod.value;
     next.uncertainty.cases = Number(dom.ensembleCases.value);
     next.uncertainty.seed = Number(dom.seedInput.value);
@@ -3313,7 +3520,7 @@ window.DFDS = (() => {
       const imported = D.parseCaseCsv(csv);
       results.push(testResult("csv-roundtrip", "ケースCSV round-trip", imported.hash === validated.hash, "export→import後の正規化ハッシュ", imported.hash, validated.hash));
       const kanakoBasis = validated.caseData.provenance.some((item) => item.id === "reference" && /KANAko/.test(item.value));
-      results.push(testResult("kanako-comparison-record", "KANAko比較記録", kanakoBasis, "公開既定条件を参考にするがcanonical出力時系列がないため差分はN/A。HLLC有限体積・分級・急縮損失のモデル差を結果合わせしない", "N/A（物理検証合格には不使用）"));
+      results.push(testResult("kanako-comparison-record", "KANAko比較記録", kanakoBasis, "公開既定条件を参考にするがcanonical出力時系列がないため差分はN/A。positivity-preserving HLL有限体積・分級・急縮損失のモデル差を結果合わせしない", "N/A（物理検証合格には不使用）"));
       const gridCase = D.makeReferenceCase();
       gridCase.solver.model = "coupled1d2d";
       gridCase.grid2d = { enabled: true, nx: 3, ny: 2, dx: 2.5, dy: 4, originX: 100, originY: -8, elevation: [12.1, 12.0, 11.8, 11.9, 11.7, 11.4] };
@@ -3362,6 +3569,14 @@ window.DFDS = (() => {
         D.validateWorkerMessage({ protocolVersion: 1, requestId: "active", type: "frame", time: 0, steps: 0, diagnostics: { time: 0, steps: 0, waterError: 0, sedimentError: 0, minDepth: 0, maxConcentration: 0, maxCfl: 0 }, lengths: { profile: 3 }, buffers: { x: bad.buffer, bed: bad.buffer.slice(0), fixedBed: bad.buffer.slice(0), surface: bad.buffer.slice(0), discharge: bad.buffer.slice(0), concentration: bad.buffer.slice(0) } }, "active", 3);
       } catch (_) { invalidBufferRejected = true; }
       results.push(testResult("worker-buffer", "非有限Worker bufferの拒否", invalidBufferRejected, "転送配列を要素単位で検証"));
+      let invalidCompleteRejected = false;
+      try { D.validateWorkerMessage({ protocolVersion: 1, requestId: "active", type: "complete", summary: { time: "Infinity", steps: -1, frameCount: 0, waterError: -1, sedimentError: 0, minDepth: 0, maxConcentration: 0, maxCfl: 0 } }, "active", 0, "run"); } catch (_) { invalidCompleteRejected = true; }
+      results.push(testResult("worker-complete", "Worker完了応答の検証", invalidCompleteRejected, "非有限・負値・欠落summaryを表示前に拒否"));
+      const memoryProbe = D.makeReferenceCase();
+      memoryProbe.solver.duration = 2000; memoryProbe.solver.outputInterval = 1;
+      memoryProbe.grid2d = Object.assign({}, memoryProbe.grid2d, { enabled: true, nx: 512, ny: 512 });
+      const historyEstimate = D.estimateCaseBytes(memoryProbe);
+      results.push(testResult("memory-history", "2D履歴込み384MiB境界", historyEstimate > D.LIMITS.maxAppBytes, "全frameのbed/depth/concentrationを算入", bytes(historyEstimate), ">384MiB"));
       const demDecode = D.decodeGsiElevation(0, 0, 0) === 0 && D.decodeGsiElevation(128, 0, 0) === null && Math.abs(D.decodeGsiElevation(255, 255, 255) + 0.01) < 1e-12;
       results.push(testResult("gsi-decode", "GSI DEM RGB decode", demDecode, "0m・NA・負標高", "公式24bit仕様"));
       let gsiAllowlist = false, unknownDatasetRejected = false;
@@ -3377,6 +3592,11 @@ window.DFDS = (() => {
         lhsStratified = lhsStratified && strata.every((value, index) => value === index);
       }
       results.push(testResult("ensemble-lhs", "Latin Hypercube・Seed再現", lhsStratified, "各パラメータの全層を一度ずつ使用", "8 case完全一致"));
+      const lhs64 = D.generateEnsembleSamples(validated.caseData, "lhs", 64, 4242), lhs128 = D.generateEnsembleSamples(validated.caseData, "lhs", 128, 4242);
+      const empirical = (samples, parameter, probability) => samples.map((sample) => sample.coordinates[parameter]).sort((a, b) => a - b)[Math.round(probability * (samples.length - 1))];
+      let maxQuantileShift = 0;
+      for (let parameter = 0; parameter < D.ENSEMBLE_PARAMETERS.length; parameter++) for (const probability of [0.05, 0.5, 0.95]) maxQuantileShift = Math.max(maxQuantileShift, Math.abs(empirical(lhs64, parameter, probability) - empirical(lhs128, parameter, probability)));
+      results.push(testResult("ensemble-lhs-quantiles", "LHS設計分位の倍増収束", maxQuantileShift <= 0.02, "64→128 caseの各入力軸5/50/95%点（出力確率予測ではない）", maxQuantileShift.toExponential(2), "<=0.02"));
       const ofat = D.generateEnsembleSamples(validated.caseData, "ofat", 9, 99), morris = D.generateEnsembleSamples(validated.caseData, "morris", 10, 99);
       const ofatValid = ofat[0].changedParameter === "baseline" && ofat.slice(1).every((sample) => sample.coordinates.filter((value) => value !== 0.5).length === 1);
       let morrisValid = true;
@@ -3620,14 +3840,16 @@ window.DFDS = (() => {
 
   function renderAll() {
     const frame = selectedFrame(); drawProfile(); drawTerrain();
-    drawSeries(dom.hydrographCanvas, "下流端流量", (item) => item.discharge[item.discharge.length - 1], palette("--water"));
+    const observer = store.get().rawCase.observers.find((item) => item.id === dom.observationSelect.value);
+    const observerIndex = observer && frame ? frame.x.reduce((best, value, index) => Math.abs(value - observer.x) < Math.abs(frame.x[best] - observer.x) ? index : best, 0) : -1;
+    drawSeries(dom.hydrographCanvas, observer ? observer.name + " 流量" : "下流端流量", (item) => item.discharge[observerIndex >= 0 ? observerIndex : item.discharge.length - 1], palette("--water"));
     drawSeries(dom.massCanvas, "最大保存誤差", (item) => Math.max(item.diagnostics.waterError, item.diagnostics.sedimentError), palette("--sediment"), true);
     renderMetrics(frame); drawEnsembleResults();
   }
   function scheduleRender() { cancelAnimationFrame(resizeFrame); resizeFrame = requestAnimationFrame(renderAll); }
 
   function bindEvents() {
-    for (const id of ["caseName", "modelMode", "durationInput", "outputIntervalInput", "cflInput", "seedInput", "manningInput", "porosityInput", "fluidDensityInput", "solidDensityInput", "uncertaintyMethod", "ensembleCases"]) {
+    for (const id of ["caseName", "modelMode", "durationInput", "outputIntervalInput", "cflInput", "seedInput", "manningInput", "porosityInput", "fluidDensityInput", "solidDensityInput", "maxConcentrationInput", "internalFrictionInput", "erosionCoefficientInput", "depositionCoefficientInput", "yieldVelocityInput", "yieldCoefficientInput", "activeLayerInput", "uncertaintyMethod", "ensembleCases"]) {
       byId(id).addEventListener("change", () => { applyEditedCase(collectForm()); updateEnsembleEstimate(); });
     }
     byId("addDamButton").addEventListener("click", () => {
@@ -3636,6 +3858,12 @@ window.DFDS = (() => {
       next.structures.push({ id: "dam-" + number, type: "impermeable", x: x0 + (x1 - x0) * 0.5, height: 5, dischargeCoefficient: 0.58, slotWidth: 1, barSpacing: 0.5, blockageProbability: 0, remobilizationShear: 0, sedimentCapacity: 50000 });
       applyEditedCase(next, "砂防ダムを追加しました");
     });
+    byId("addObserverButton").addEventListener("click", () => {
+      const next = collectForm(), used = new Set(next.observers.map((item) => item.id)); let number = next.observers.length + 1; while (used.has("obs" + number)) number++;
+      const x0 = next.cells1d[0].x, x1 = next.cells1d[next.cells1d.length - 1].x;
+      next.observers.push({ id: "obs" + number, name: number + "番観測点", x: x0 + (x1 - x0) * 0.5 }); applyEditedCase(next, "観測点を追加しました");
+    });
+    dom.observationSelect.addEventListener("change", renderAll);
     byId("validateButton").addEventListener("click", runSelfTests); byId("runButton").addEventListener("click", startRun); byId("pauseButton").addEventListener("click", togglePause); byId("cancelButton").addEventListener("click", cancelRun);
     dom.ensembleRunButton.addEventListener("click", startEnsemble); dom.ensembleCancelButton.addEventListener("click", cancelEnsemble); dom.ensembleExportButton.addEventListener("click", exportEnsemble);
     byId("exportButton").addEventListener("click", exportCase); byId("importButton").addEventListener("click", () => dom.csvFileInput.click()); dom.resultExportButton.addEventListener("click", openResultExport);
