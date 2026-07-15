@@ -52,3 +52,27 @@
 - 固相濃度の不変領域を越える輸送丸めは、超過固相を粒径比どおり河床へ移し、混合物深も同量減らす保存的射影で処理する。水量と粒径別全固相の単体保存誤差は0だった。
 - GSI標高タイルは固定HTTPS host・dataset allowlist・1 tile上限・Abort timeoutを使う。公式RGB仕様の0 m、欠測`(128,0,0)`、負標高を試験し、東京駅地点でDEM1A z17の256×256タイルを実ブラウザ取得、欠測率0%と出典表示を確認した。
 - 2D地形を含むケースCSVはenabled、格子形状、全標高値、正規化hashがround-trip後に一致した。オンライン取得失敗時は現在地形を変更せず、ローカル`grid_2d` CSVを案内する。
+
+## 2026-07-16 実験的五方程式・感度分析
+
+- USGS D-Claw理論 `https://claw.code-pages.usgs.gov/dclaw/src/theory.html` とGeorge & Iverson (2014) `https://pubs.usgs.gov/publication/70170254` を再確認した。実装は`h,hu,hv,hm,p_b`、単一混合速度、固相率、間隙水圧、ダイレイタンシー、排水、侵食取り込みを持つ縮約実験モデルであり、USGS実装互換ではない。
+- 固相率0で高度流束と標準HLLCの質量・運動量流束差は0。濃厚状態の正値・上限、間隙水圧、同一Seed完全一致、侵食取り込みの試験は水・全固相保存誤差`2.31e-16`以下で合格した。
+- UI実行では実験警告と適用限界を表示したまま、参照ケース1200 s・24,001 stepを完走した。最大CFL`0.376`、内部sourceを含む水収支誤差`4.28e-6`、固相収支誤差`2.28e-8`だった。
+- 一因子変化は基準点から一軸のみ、LHSは各パラメータの全層を一度ずつ、Morrisはtrajectory内で一軸ずつ変化させる。全手法はSeed固定で同じsampling designを再生成する。
+- Worker poolはrequest IDを`workerIndex:requestId`名前空間で管理し、最大4かつ総推定ピーク384MiB以内に制限する。LHS 4 caseは4/4、Morris 5 caseは5/5成功した。
+- 8 case実行中のcancelでは実行中4件と未開始4件を区別して保持した。各caseの失敗も他caseを止めずCSVのstatus/errorへ残す。
+- `ensemble.csv`はUTF-8 BOM、CRLF、式注入対策済みserializerを使用し、パラメータJSON、収支、CFL、step、ピーク流量、Morris素効果を出力する。Canvasは同じ結果モデルのピーク流量を描画する。
+
+## 2026-07-16 数値・ブラウザ・性能監査
+
+- Chromium実ブラウザの統合自己試験は46/46合格。不規則河床静水誤差`2.61e-16`、4格子乾床ダムブレーク最大保存誤差`3.55e-16`、移動汀線保存誤差0かつ1 cellのwet mask変化、MUSCL製造解L1次数`2.03`を確認した。
+- 結合参照ケースは水`4.38e-7`・土砂`3.49e-8`で`1e-6`基準内。高度モデル単体は水・固相`2.31e-16`以下。各粒径・活性層・3形式ダム・連続ダムも`1e-8`基準内だった。
+- KANAko 1.44公式配布ページ `https://sabo-int.org/new-technology/kanako_en/kanako_jp/` と公開論文を確認したが、現在のクリーンルーム参照条件に対応するcanonical出力時系列は公開されていない。したがってピーク・到達・河床差分はN/Aと記録し、物理検証合格には使わない。差の要因はKanakoのstaggered有限差分に対する本実装のHLLC有限体積、分級、活性層、急縮損失のモデル差であり、結果合わせをしない。
+- Chrome・Edge・FirefoxはいずれもWorker起動、自己試験46/46、390px幅overflow 0、3モバイルタブ切替、キーボードEnter、reduced-motion `1µs`を確認した。Edge・Firefoxは停止後に24,001 stepを再完走し、console error/warningは0だった。
+- `file:`直接起動はChrome headlessで`data-js=enabled`、Blob Worker `ready / protocol 1`、初期化ログあり、利用不可stateなしを確認した。
+- Chrome計測はDOMContentLoaded `38.9ms`、load `39.9ms`、Worker readyまで`61ms`。参照計算は`11.63s`、rAF平均`6.50ms`、最大`12.7ms`、243 Worker frame、main heap peak`7,845,689 byte`。同時4 Worker見積りは`39.5MiB`で384MiB内。
+- 初期ネットワークはHTML documentと同一HTMLから生成したBlob Workerの2 requestのみで、外部必須resource・依存chainはない。GSIはユーザー操作時だけ取得する。
+- a11y検査は可視interactive 54要素すべてに名前あり、重複IDなし、h1→h2順序、focus-visibleあり。最小文字色`--faint`を`#788c86`へ上げ、panel背景との比を`4.70:1`にした。
+- Chrome DevTools MCPが未設定のため`web-perf`スキル固有のLCP/CLS traceは未実施。Playwright Performance/Network/DOM APIを代替証拠にし、未実施点を隠さない。
+- HTMLは結果CSV追加後も251,644 byteで、非圧縮700KiB上限の35.1%。外部framework・bundler・画像・fontはない。
+- 5 frame参照計算から`summary.csv` 1行、`timeseries.csv` 5行、`spatial.csv` 155行、`mass_balance.csv` 5行を出力し、全てUTF-8 BOM・CRLFを確認した。`ensemble.csv`を含む全出力は250,000行上限と式注入対策を共有する。
