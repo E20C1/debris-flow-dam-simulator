@@ -2060,15 +2060,21 @@ function runSelfTests() {
     const c = makeWorkerTestCase({ n: 41, duration: 0.1, maxDt: 0.0001, bed: (x) => -slope * x, depth: () => normalDepth, manning, inflow: unitDischarge, left: "inflow", right: "open" });
     c.solver.estimatedMinDt = 0.0001; c.solver.maxSteps = 1000000;
     const result = runWorkerTestCase(c, velocity);
-    let depthError = 0, dischargeError = 0, residual = 0;
+    const residualRateFor = (probeDt) => {
+      const probeRandom = mulberry32(c.solver.seed), probeFirst = eulerStage(result.state, c, probeDt, probeRandom), probeSecond = eulerStage(probeFirst.state, c, probeDt, probeRandom), probe = averageStates(result.state, probeSecond.state, c);
+      let rate = 0;
+      for (let i = 5; i < result.state.n - 5; i++) rate = Math.max(rate, Math.abs(probe.h[i] - result.state.h[i]) / (probeDt * normalDepth), Math.abs(probe.q[i] - result.state.q[i]) / (probeDt * unitDischarge));
+      return rate;
+    };
+    let depthError = 0, dischargeError = 0;
     for (let i = 5; i < result.state.n - 5; i++) {
       depthError = Math.max(depthError, Math.abs(result.state.h[i] - normalDepth) / normalDepth);
       dischargeError = Math.max(dischargeError, Math.abs(result.state.q[i] - unitDischarge) / unitDischarge);
-      residual = Math.max(residual, Math.abs(result.state.q[i] - unitDischarge) / Math.max(1, result.state.steps));
     }
-    const passed = depthError <= 0.01 && dischargeError <= 0.005 && residual <= 1e-8 && result.diagnostics.maxCfl <= c.solver.cfl + 1e-12;
-    results.push(makeTestResult("uniform-flow", "Manning定常等流の定量誤差", passed ? "pass" : "fail", Math.max(depthError, dischargeError), "水深<=1%・流量<=0.5%・残差<=1e-8/step", "h_n=" + normalDepth.toFixed(4) + "m; residual=" + residual.toExponential(2)));
-  } catch (error) { results.push(makeTestResult("uniform-flow", "Manning定常等流の定量誤差", "fail", "例外", "水深<=1%・流量<=0.5%", error.message)); }
+    const residualRateA = residualRateFor(0.0001), residualRateB = residualRateFor(0.00005), residualRate = Math.max(residualRateA, residualRateB), residualRateShift = Math.abs(residualRateA - residualRateB) / Math.max(residualRate, 1e-30);
+    const passed = depthError <= 0.01 && dischargeError <= 0.005 && residualRate <= 2e-6 && residualRateShift <= 0.05 && result.diagnostics.maxCfl <= c.solver.cfl + 1e-12;
+    results.push(makeTestResult("uniform-flow", "Manning定常等流の定量誤差", passed ? "pass" : "fail", Math.max(depthError, dischargeError), "水深<=1%・流量<=0.5%・時間残差<=2e-6/s・dt半減差<=5%", "h_n=" + normalDepth.toFixed(4) + "m; residualRate=" + residualRate.toExponential(2) + "/s; dt shift=" + (100 * residualRateShift).toFixed(2) + "%"));
+  } catch (error) { results.push(makeTestResult("uniform-flow", "Manning定常等流の定量誤差", "fail", "例外", "水深<=1%・流量<=0.5%・時間残差<=2e-6/s", error.message)); }
   try {
     const order = manufacturedOrder();
     results.push(makeTestResult("reconstruction-order", "MUSCL界面再構成の格子収束", order >= 1.7 ? "pass" : "fail", order, ">=1.7", "sin波の界面再構成L1（PDE解ではない）"));
@@ -2897,6 +2903,16 @@ window.DFDS = (() => {
     if (typeof message.requestId !== "string" || !message.requestId) throw new ValidationError("Worker requestIdが不正です");
     if (activeRequestId && message.requestId !== activeRequestId) return { stale: true };
     if (!["ready", "progress", "frame", "checkpoint", "complete", "error"].includes(message.type)) throw new ValidationError("Worker応答typeが未知です");
+    const allowedByRequest = {
+      init: ["ready", "error"],
+      run: ["progress", "frame", "checkpoint", "complete", "error"],
+      validate: ["complete", "error"],
+      pause: ["progress", "error"],
+      resume: ["progress", "error"],
+      cancel: ["progress", "error"],
+    };
+    if (requestType && (!allowedByRequest[requestType] || !allowedByRequest[requestType].includes(message.type))) throw new ValidationError("Worker request/response typeの対応が不正です");
+    if (["pause", "resume", "cancel"].includes(requestType) && message.type === "progress" && message.acknowledged !== requestType) throw new ValidationError("Worker control acknowledgementがrequestと一致しません");
     const finiteNumber = (value, name, minimum = -Infinity, maximum = Infinity, integer = false) => {
       if (typeof value !== "number" || !Number.isFinite(value) || value < minimum || value > maximum || (integer && !Number.isInteger(value))) throw new ValidationError("Worker " + name + "が不正です");
     };
@@ -2946,16 +2962,21 @@ window.DFDS = (() => {
       finiteNumber(message.checkpoint.steps, "checkpoint.steps", 0, Number.MAX_SAFE_INTEGER, true);
     }
     if (message.type === "complete") {
-      if (requestType === "run" || message.summary !== undefined) {
+      if (requestType === "validate") {
+        if (!Array.isArray(message.tests) || message.tests.length < 1 || message.tests.length > 200) throw new ValidationError("Worker testsが不正です");
+        for (const result of message.tests) if (!result || typeof result.id !== "string" || typeof result.title !== "string" || !["pass", "fail", "skip"].includes(result.status)) throw new ValidationError("Worker test結果が不正です");
+      } else if (requestType === "run" || message.summary !== undefined) {
         const summary = message.summary;
         if (!summary || typeof summary !== "object") throw new ValidationError("Worker complete summaryがありません");
         for (const key of ["time", "waterError", "sedimentError", "minDepth", "maxConcentration", "maxCfl"]) finiteNumber(summary[key], "summary." + key, key === "minDepth" ? -1e-10 : 0);
         finiteNumber(summary.steps, "summary.steps", 0, LIMITS.maxSteps, true);
         finiteNumber(summary.frameCount, "summary.frameCount", 1, LIMITS.maxFrames + 2, true);
         if (summary.maxConcentration > 1 + 1e-12) throw new ValidationError("Worker summary濃度が範囲外です");
-      } else if (requestType === "validate" || message.tests !== undefined) {
+      } else if (message.tests !== undefined) {
         if (!Array.isArray(message.tests) || message.tests.length < 1 || message.tests.length > 200) throw new ValidationError("Worker testsが不正です");
         for (const result of message.tests) if (!result || typeof result.id !== "string" || typeof result.title !== "string" || !["pass", "fail", "skip"].includes(result.status)) throw new ValidationError("Worker test結果が不正です");
+      } else {
+        throw new ValidationError("Worker complete payloadがありません");
       }
     }
     if (message.type === "error" && (typeof message.message !== "string" || typeof message.code !== "string")) throw new ValidationError("Worker error messageが不正です");
@@ -3572,6 +3593,15 @@ window.DFDS = (() => {
       let invalidCompleteRejected = false;
       try { D.validateWorkerMessage({ protocolVersion: 1, requestId: "active", type: "complete", summary: { time: "Infinity", steps: -1, frameCount: 0, waterError: -1, sedimentError: 0, minDepth: 0, maxConcentration: 0, maxCfl: 0 } }, "active", 0, "run"); } catch (_) { invalidCompleteRejected = true; }
       results.push(testResult("worker-complete", "Worker完了応答の検証", invalidCompleteRejected, "非有限・負値・欠落summaryを表示前に拒否"));
+      const responseMismatchProbes = [
+        [{ protocolVersion: 1, requestId: "active", type: "complete", summary: { time: 1, steps: 1, frameCount: 1, waterError: 0, sedimentError: 0, minDepth: 0, maxConcentration: 0, maxCfl: 0 } }, "validate"],
+        [{ protocolVersion: 1, requestId: "active", type: "ready", limits: D.LIMITS }, "run"],
+        [{ protocolVersion: 1, requestId: "active", type: "frame" }, "init"],
+        [{ protocolVersion: 1, requestId: "active", type: "progress", acknowledged: "resume" }, "pause"],
+      ];
+      let responseMismatchRejected = 0;
+      for (const [message, requestType] of responseMismatchProbes) try { D.validateWorkerMessage(message, "active", 0, requestType); } catch (_) { responseMismatchRejected++; }
+      results.push(testResult("worker-response-map", "Worker request/response型対応", responseMismatchRejected === responseMismatchProbes.length, "validateへsummary・runへready・initへframe・pauseへresume ackを全拒否", responseMismatchRejected + "/" + responseMismatchProbes.length, "全拒否"));
       const memoryProbe = D.makeReferenceCase();
       memoryProbe.solver.duration = 2000; memoryProbe.solver.outputInterval = 1;
       memoryProbe.grid2d = Object.assign({}, memoryProbe.grid2d, { enabled: true, nx: 512, ny: 512 });

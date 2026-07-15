@@ -39,11 +39,12 @@
 
 ## 5. Workerプロトコル
 
-- request: `init,run,pause,resume,cancel,validate,sweep`
+- request: `init,run,pause,resume,cancel,validate`
 - response: `ready,progress,frame,checkpoint,complete,error`
+- request/response対応を固定し、`init -> ready`、`validate -> complete(tests必須)`、`run -> progress/frame/checkpoint/complete(summary必須)`、制御要求 -> 同名acknowledgement とする。不一致はcallback前に拒否する。
 - すべてに`protocolVersion`, `requestId`, `type`を持たせる。
 - 数値計算はWorker内の`Float64Array`を正とし、表示用スナップショットだけを転送する。
-- 進捗通知は最大10Hz、描画は最大30fps。計算時間刻みと描画間隔を分離する。
+- 進捗通知は最大10Hzとし、計算時間刻みと表示用出力間隔を分離する。
 
 ## 6. 標準1Dモデル
 
@@ -85,7 +86,7 @@
 
 ## 10. 数値検証と合格基準
 
-- 静水保持は完全湿潤と複数乾燥島、乾床ダムブレークはRitter解析解との4格子比較、定常等流はManning正常水深・流量・残差、移動汀線はwet mask変化と保存を自己試験に含める。
+- 静水保持は完全湿潤と複数乾燥島、乾床ダムブレークはRitter解析解との4格子比較、定常等流はManning正常水深・流量と追加stepの正規化時間残差、移動汀線はwet mask変化と保存を自己試験に含める。Manning時間残差は2刻みで評価し、最大`2e-6/s`、刻み半減差5%以下とする。
 - 粒径別土砂保存、河床変動、ダム越流・スリット・格子閉塞、1D-2D境界、二相流を個別試験する。
 - 閉領域相対保存誤差: 1D `<= 1e-8`、2Dと結合 `<= 1e-6`。
 - 全ステップで水深、固相率、濃度を有限・非負・物理上限内に保つ。
