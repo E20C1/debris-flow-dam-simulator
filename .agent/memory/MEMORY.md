@@ -5,41 +5,35 @@
 - `debris_flow_dam_simulator.html`だけで動く、土石流・砂防ダム統合シミュレーター。
 - 標準1D、多粒径河床変動、3形式の複数砂防ダム、保存的1D–2D結合、実験的五方程式高度モード、一因子・LHS・Morris感度分析を統合済み。
 - 外部必須依存はなく、`file://`でBlob Workerを起動できる。GSI DEMだけ任意のオンライン補助。
-- 可搬入出力はRFC 4180 CSVに統一し、ケース設定hashとSeedを再現性の基準にする。
+- 可搬入出力はRFC 4180 CSV、再現性の基準は検証済みcase hashとSeedである。
 
 ## 恒久的な設計判断
 
-- 数値stateはWorker内`Float64Array`を正とし、main/UIとはversioned messageで分離する。
+- 数値stateはWorker内`Float64Array`を正とし、main/UIとはprotocol 1 messageで分離する。
 - 入力は`parse -> normalize -> validate -> freeze -> dispatch`、Worker内再検証、main側応答検証の三層境界を維持する。
-- 標準1Dは`h,hu,hC_k`を保存し、水体積を`h-ΣhC_k`から導出する。水と混合物を二重保存しない。
-- 乾床希薄波速を含むpositivity-preserving HLL、hydrostatic reconstruction、MUSCL、SSP-RK2を使用する。
-- 384MiBは2D全frame履歴、全Worker、転送、描画を含むアプリ全体ピーク上限とする。
+- Workerはクライアント由来の派生`face`/`faceX`を信用せず、検証済み`cells1d`と`dam.x`から独立再計算する。mainもframe.xと検証済みケース座標の完全一致を確認する。
+- ダムの`x`は要求位置としてCSV/hashに保持し、実効計算面は派生値とする。等距離faceは局所距離・局所face間隔の32 ULP以内なら上流側を採り、絶対座標値や絶対下限を許容幅に使わない。
+- 有限体積縦断は水面・移動床をダムfaceで左右セル平均値の段差として描き、固定床は連続線とする。表示平滑化で不連続を隠さない。
+- 標準1Dは`h,hu,hC_k`を保存し、水体積を`h-ΣhC_k`から導出する。384MiBは全Worker・履歴・転送・描画を含むアプリ全体ピーク上限である。
 - KANAkoとの差を特殊処理で合わせない。canonical出力不在はN/Aとし、物理検証合格には使わない。
 
-## 完了時の検証基線
+## 2026-07-16 ダム縦断描画・格子収束基線
 
-- 独立監査タスク`019f6606-edf6-7fc0-8581-3697d75940a6`はcommit `ed1cad9`を再々監査し、P0/P1/P2なし・技術的リリース可と判定。
-- Chrome・Edge・FirefoxとChrome `file://`で57/57、fail 0、console error/warning 0。Worker数値試験32/32。
-- request/response交差型4件を全拒否し、正常4件を全受理。pause/resume/cancel実動作も確認。
-- Ritter 4格子L1 `1.293e-3`・次数`0.980`、線形浅水PDE次数`1.623`、2D Ritter L1 `1.076e-2`。
-- Manning正常水深・流量誤差`3.216e-8`、時間残差`1.56e-6/s`、dt半減差`0.09%`。
-- 標準・結合・高度は各1200秒・24,001 step完走。HTMLは279,089 byteで700KiB以下。
-
-## KANAko 1.44実機比較後の追加基線
-
-- KANAkoは不透過・スリット・格子、地点編集、流入曲線、堆積層一括設定、観測点追加を持ち、計算中は設定をロックする。格子専用値は本実装の確率閉塞モデルへ直接換算しない。
-- HTMLへ流入時系列表、河道点編集・線形再標本化、堆積層厚一括適用、形式固有ダム欄、安全既定値、未使用面/点への追加を統合した。
-- 実行・検証・ensemble・DEM・CSV読込中はUIと編集入口を二重ロックし、run requestへ検証済みcase hashを固定する。同一計算面の複数ダムはmain/Workerの両方で拒否する。
-- 最新の統合自己試験は68/68。標準1200秒は24,001 step・243 frame、console error/warning 0。UI CSV保存→変更→再読込でManning 0.031とhash `58bc1f19`の復元を確認した。
-- 390px幅は設定・解析・診断の3状態でoverflow 0、HTMLは約310KBで700KiB以下、外部必須resource 0。今回の自動`file://`遷移はブラウザ安全ポリシーで拒否されたが、従来の`file://`基線とBlob Worker構造は維持する。
+- 独立監査タスク`019f6979-cefb-7d90-96e2-a6253ff5b7d8`は最終的に「P0/P1なし・実装完了可」と判定した。微小/大座標、小数tie、`1e-300`を含むface完全一致でもWorker/main一致を独立確認した。
+- Chromium自己試験75/75、console error/warning 0。標準1200秒は24,001 step・243 frame。reset、timeline、3ダム形式、CSV hash`33b0381e`往復、390px overflow 0、DPR 2、a11y、外部必須resource 0を確認した。
+- Canvas pixel走査で黄色ダム線と水面・移動床の段差が実効面95/195mへ一致し、入力位置100/200mへ描く旧ずれと三角スパイクを解消した。
+- 31/61/121点の自己収束次数は900秒で水面1.424・水深1.716・河床変動1.339、1200秒で1.367・1.554・1.759。実効面誤差は5→2.5→1.25mへ半減した。
+- ただし同一支持領域の水深解像度適合は900秒29.9%、1200秒67.8%で2%目安に未達。ダム直下流traceも非単調で、121点の絶対局所水深を格子独立とは認定しない。
+- 開境界の水/土砂収支誤差は回帰指標であり閉領域保存の証拠ではない。閉領域の既存保存試験は`1e-8`以下を維持する。
+- HTMLは332,723 byteで700KiB以下。CSV schema 1、Worker protocol 1、case hash対象、必須依存を変更していない。
 
 ## 明示する利用制約
 
-- 高度モードは縮約実験モデルで、USGS D-Claw互換ではなく、現地・防災判断には使わない。
-- GSI DEMは河道横断や構造物を保証しない。現地利用には測量・係数校正・観測比較が必要。
-- KANAko canonical出力、公開実験による高度モデル校正、実地形での1D–2D校正は未実施。
+- 121点でもダム直近の絶対値は未収束であり、現地・防災判断には使わない。必要なら別SDDで局所格子、不連続追跡、測量・観測校正を扱う。
+- 高度モードは縮約実験モデルで、USGS D-Claw互換ではない。
+- GSI DEMは河道横断や構造物を保証しない。KANAko canonical出力、公開実験による高度モデル校正、実地形での1D–2D校正は未実施。
 
 ## 運用
 
 - 仕様の正は`.spec/SPEC.md`、完了証拠は`.spec/TODO.md`、詳細数値は`.spec/KNOWLEDGE.md`。
-- 完了時点で監査用HTTPサーバー、Playwright session、Astro/Gradle副作用は残していない。
+- 完了時は監査用HTTPサーバー、Playwright session、Astro/Gradle副作用を残さない。

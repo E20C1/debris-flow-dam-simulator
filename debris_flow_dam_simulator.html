@@ -163,6 +163,7 @@
     .dam-detail td { padding: 7px 9px 11px; background: rgba(0,0,0,.12); }
     .dam-detail .form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .dam-detail .field label { font-size: 10px; }
+    .dam-face-meta { margin: 0 0 8px; color: var(--muted); font-family: var(--mono); }
     .workbench { display: grid; grid-template-rows: auto minmax(390px, 1fr) minmax(180px, .46fr); gap: 10px; }
     .view-tabs, .mobile-tabs { display: flex; gap: 4px; padding: 5px; overflow-x: auto; }
     .view-tab, .mobile-tab { white-space: nowrap; background: transparent; border-color: transparent; color: var(--muted); }
@@ -181,6 +182,7 @@
     }
     .legend-item { display: flex; align-items: center; gap: 7px; }
     .legend-swatch { width: 17px; height: 3px; background: var(--text); }
+    .legend-note { max-width: 160px; color: var(--faint); font-size: 9px; line-height: 1.35; }
     .chart-grid { display: grid; grid-template-columns: 1.25fr .75fr; height: 100%; min-height: 180px; }
     .chart-cell { position: relative; min-width: 0; min-height: 180px; border-right: 1px solid var(--line); }
     .chart-cell:last-child { border-right: 0; }
@@ -393,11 +395,12 @@
         <section class="panel view-frame" aria-label="解析ビュー">
           <div class="view-pane active" id="profilePane" data-view-pane="profile">
             <div class="canvas-wrap">
-              <canvas id="profileCanvas" aria-label="河道縦断、水面、河床、砂防ダム"></canvas>
+              <canvas id="profileCanvas" aria-label="河道縦断、水面、河床、砂防ダム。水面と移動床の段差はダム計算面の左右セル値"></canvas>
               <div class="canvas-legend" aria-hidden="true">
                 <div class="legend-item"><span class="legend-swatch" style="background:var(--water)"></span>水面</div>
                 <div class="legend-item"><span class="legend-swatch" style="background:var(--bed)"></span>移動床</div>
                 <div class="legend-item"><span class="legend-swatch" style="background:var(--fixed)"></span>固定床</div>
+                <div class="legend-note">段差はダム計算面の左右セル値</div>
               </div>
             </div>
           </div>
@@ -535,6 +538,52 @@ function range(value, name, min, max, inclusiveMin = true, inclusiveMax = true) 
   return value;
 }
 
+function resolveStructureFaces(cells, requestedXs) {
+  if (!Array.isArray(cells) || cells.length < 2) throw new Error("構造物の計算面投影には2点以上の河道が必要です");
+  if (!requestedXs || !Number.isInteger(requestedXs.length) || requestedXs.length < 0) throw new Error("構造物位置の配列が不正です");
+  let previousX = -Infinity;
+  for (const cell of cells) {
+    finite(cell && cell.x, "cell.x");
+    if (cell.x <= previousX) throw new Error("1Dセル座標が単調増加ではありません");
+    previousX = cell.x;
+  }
+  let previousFaceX = -Infinity;
+  for (let face = 1; face < cells.length; face++) {
+    const faceX = 0.5 * (cells[face - 1].x + cells[face].x);
+    if (!Number.isFinite(faceX) || faceX <= previousFaceX) throw new Error("構造物の計算面座標が有限かつ単調増加ではありません");
+    previousFaceX = faceX;
+  }
+  const faceXAt = (face) => {
+    const faceX = 0.5 * (cells[face - 1].x + cells[face].x);
+    if (!Number.isFinite(faceX)) throw new Error("構造物の計算面座標が有限ではありません");
+    return faceX;
+  };
+  return Array.from(requestedXs, (requestedX) => {
+    finite(requestedX, "structure.x");
+    let low = 1, high = cells.length;
+    while (low < high) {
+      const middle = low + Math.floor((high - low) / 2);
+      if (faceXAt(middle) < requestedX) low = middle + 1;
+      else high = middle;
+    }
+    let face;
+    if (low === 1) face = 1;
+    else if (low === cells.length) face = cells.length - 1;
+    else {
+      const lowerFaceX = faceXAt(low - 1), upperFaceX = faceXAt(low);
+      const lowerDistance = Math.abs(requestedX - lowerFaceX), upperDistance = Math.abs(upperFaceX - requestedX);
+      const tieTolerance = 32 * Number.EPSILON * Math.max(lowerDistance, upperDistance, upperFaceX - lowerFaceX);
+      face = lowerDistance <= upperDistance + tieTolerance ? low - 1 : low;
+    }
+    const faceX = faceXAt(face);
+    return { face, leftIndex: face - 1, rightIndex: face, faceX, offset: faceX - requestedX };
+  });
+}
+
+function resolveStructureFace(cells, requestedX) {
+  return resolveStructureFaces(cells, [requestedX])[0];
+}
+
 function estimateCaseBytes(c) {
   const n = c.cells1d.length;
   const k = c.grains.length;
@@ -614,9 +663,11 @@ function validateCase(c) {
     if (sum > c.material.maxConcentration + 1e-12) throw new Error("流入濃度合計が上限を超えています");
   }
   if (!Array.isArray(c.structures)) throw new Error("structuresが配列ではありません");
+  const resolvedStructureFaces = resolveStructureFaces(c.cells1d, c.structures.map((structure) => structure && structure.x));
   const structureIds = new Set();
   const structureFaces = new Set();
-  for (const structure of c.structures) {
+  for (let structureIndex = 0; structureIndex < c.structures.length; structureIndex++) {
+    const structure = c.structures[structureIndex];
     if (!structure || typeof structure.id !== "string" || structureIds.has(structure.id)) throw new Error("構造物IDが不正または重複しています");
     structureIds.add(structure.id);
     if (!["impermeable", "slit", "grid"].includes(structure.type)) throw new Error("構造物種類が不正です");
@@ -628,13 +679,9 @@ function validateCase(c) {
     range(structure.blockageProbability, "blockageProbability", 0, 1);
     range(structure.remobilizationShear, "remobilizationShear", 0, 1e9);
     range(structure.sedimentCapacity, "sedimentCapacity", 0, 1e12);
-    let nearestFace = 1, nearestDistance = Infinity;
-    for (let face = 1; face < c.cells1d.length; face++) {
-      const faceX = 0.5 * (c.cells1d[face - 1].x + c.cells1d[face].x), distance = Math.abs(faceX - structure.x);
-      if (distance < nearestDistance) { nearestDistance = distance; nearestFace = face; }
-    }
-    if (structureFaces.has(nearestFace)) throw new Error("複数の構造物が同じ計算面へ割り当てられています");
-    structureFaces.add(nearestFace);
+    const resolvedFace = resolvedStructureFaces[structureIndex];
+    if (structureFaces.has(resolvedFace.face)) throw new Error("複数の構造物が同じ計算面へ割り当てられています");
+    structureFaces.add(resolvedFace.face);
   }
   if (!Array.isArray(c.observers)) throw new Error("observersが配列ではありません");
   for (const observer of c.observers) range(observer.x, "observer.x", c.cells1d[0].x, c.cells1d[c.cells1d.length - 1].x);
@@ -755,15 +802,15 @@ function createState1D(c) {
     dx[i] = right - left;
     if (!(dx[i] > 0)) throw new Error("1D control volume幅が不正です");
   }
-  const structures = c.structures.map((structure) => {
-    let face = 1;
-    let best = Infinity;
-    for (let j = 1; j < n; j++) {
-      const faceX = 0.5 * (x[j - 1] + x[j]);
-      const distance = Math.abs(faceX - structure.x);
-      if (distance < best) { best = distance; face = j; }
-    }
-    return Object.assign({}, structure, { face, blockage: 0, captured: new Float64Array(kCount) });
+  const resolvedStructures = resolveStructureFaces(c.cells1d, c.structures.map((structure) => structure.x));
+  const structures = c.structures.map((structure, structureIndex) => {
+    const resolved = resolvedStructures[structureIndex];
+    const trustedStructure = {
+      id: structure.id, type: structure.type, x: structure.x, height: structure.height, dischargeCoefficient: structure.dischargeCoefficient,
+      slotWidth: structure.slotWidth, barSpacing: structure.barSpacing, blockageProbability: structure.blockageProbability,
+      remobilizationShear: structure.remobilizationShear, sedimentCapacity: structure.sedimentCapacity,
+    };
+    return Object.assign(trustedStructure, { face: resolved.face, blockage: 0, captured: new Float64Array(kCount) });
   });
   return { n, kCount, x, dx, width, fixedBed, bed, h, q, hc, bedFraction, activeFraction, structures, time: 0, steps: 0 };
 }
@@ -2036,6 +2083,14 @@ function runSelfTests() {
     results.push(makeTestResult("worker-duplicate-face", "Worker同一計算面ダム拒否", rejected ? "pass" : "fail", rejected ? "拒否" : "受理", "拒否", "main検証を迂回しても後続ダムを暗黙無視しない"));
   } catch (error) { results.push(makeTestResult("worker-duplicate-face", "Worker同一計算面ダム拒否", "fail", "例外", "拒否", error.message)); }
   try {
+    const structure = { id: "face-probe", type: "impermeable", x: 100, face: 29, faceX: 999, height: 1, dischargeCoefficient: 0.6, slotWidth: 0, barSpacing: 0, blockageProbability: 0, remobilizationShear: 0, sedimentCapacity: 100 };
+    const c = makeWorkerTestCase({ n: 31, dx: 10, structures: [structure] }), resolved = resolveStructureFace(c.cells1d, structure.x), state = createState1D(c);
+    const decimalCells = [{ x: 0.1 }, { x: 0.2 }, { x: 0.4 }], decisionX = 0.15 + 0.5 * (0.3 - 0.15), tieResolved = resolveStructureFaces(decimalCells, [decisionX, 0.3]);
+    const fractionalCells = Array.from({ length: 31 }, (_, index) => ({ x: index * (40 / 30) })), ulpTie = resolveStructureFace(fractionalCells, 20), largeExact = resolveStructureFace([{ x: 1e16 }, { x: 1e16 + 4 }, { x: 1e16 + 8 }], 1e16 + 6), tinyExact = resolveStructureFace([{ x: 0 }, { x: 1e-16 }, { x: 2e-16 }], 1.5e-16);
+    const passed = resolved.face === 10 && resolved.leftIndex === 9 && resolved.rightIndex === 10 && resolved.faceX === 95 && resolved.offset === -5 && state.structures[0].face === resolved.face && !Object.prototype.hasOwnProperty.call(state.structures[0], "faceX") && tieResolved[0].face === 1 && tieResolved[1].face === 2 && ulpTie.face === 15 && largeExact.face === 2 && tinyExact.face === 2;
+    results.push(makeTestResult("worker-face-resolution", "Worker計算面の独立再解決", passed ? "pass" : "fail", resolved.faceX, "95 m / face 10", "クライアント派生faceを受け取らず受信ケースから再計算"));
+  } catch (error) { results.push(makeTestResult("worker-face-resolution", "Worker計算面の独立再解決", "fail", "例外", "95 m / face 10", error.message)); }
+  try {
     const c = makeWorkerTestCase({ duration: 2000 });
     c.solver.outputInterval = 1; c.grid2d = Object.assign({}, c.grid2d, { enabled: true, nx: 512, ny: 512 });
     const estimate = estimateCaseBytes(c);
@@ -2528,19 +2583,173 @@ window.DFDS = (() => {
     throw new ValidationError("指定地点に利用可能なGSI DEMがありません。grid_2d CSVを読み込んでください");
   }
 
-  function nearestFaceIndex(cells, x) {
-    if (!Array.isArray(cells) || cells.length < 2 || !Number.isFinite(x)) return -1;
-    let bestFace = 1, bestDistance = Infinity;
-    for (let face = 1; face < cells.length; face++) {
-      const faceX = 0.5 * (cells[face - 1].x + cells[face].x), distance = Math.abs(faceX - x);
-      if (distance < bestDistance) { bestDistance = distance; bestFace = face; }
+  function resolveStructureFaces(cells, requestedXs) {
+    if (!Array.isArray(cells) || cells.length < 2) throw new ValidationError("構造物の計算面投影には2点以上の河道が必要です");
+    if (!requestedXs || !Number.isInteger(requestedXs.length) || requestedXs.length < 0) throw new ValidationError("ダム位置の配列が不正です");
+    let previousX = -Infinity;
+    for (const cell of cells) {
+      if (!cell || !Number.isFinite(cell.x) || cell.x <= previousX) throw new ValidationError("1Dセル座標は有限かつ単調増加である必要があります");
+      previousX = cell.x;
     }
-    return bestFace;
+    let previousFaceX = -Infinity;
+    for (let face = 1; face < cells.length; face++) {
+      const faceX = 0.5 * (cells[face - 1].x + cells[face].x);
+      if (!Number.isFinite(faceX) || faceX <= previousFaceX) throw new ValidationError("ダムの計算面座標は有限かつ単調増加である必要があります");
+      previousFaceX = faceX;
+    }
+    const faceXAt = (face) => {
+      const faceX = 0.5 * (cells[face - 1].x + cells[face].x);
+      if (!Number.isFinite(faceX)) throw new ValidationError("ダムの計算面座標が有限ではありません");
+      return faceX;
+    };
+    return Object.freeze(Array.from(requestedXs, (requestedX) => {
+      if (!Number.isFinite(requestedX)) throw new ValidationError("ダム位置は有限数である必要があります");
+      let low = 1, high = cells.length;
+      while (low < high) {
+        const middle = low + Math.floor((high - low) / 2);
+        if (faceXAt(middle) < requestedX) low = middle + 1;
+        else high = middle;
+      }
+      let face;
+      if (low === 1) face = 1;
+      else if (low === cells.length) face = cells.length - 1;
+      else {
+        const lowerFaceX = faceXAt(low - 1), upperFaceX = faceXAt(low);
+        const lowerDistance = Math.abs(requestedX - lowerFaceX), upperDistance = Math.abs(upperFaceX - requestedX);
+        const tieTolerance = 32 * Number.EPSILON * Math.max(lowerDistance, upperDistance, upperFaceX - lowerFaceX);
+        face = lowerDistance <= upperDistance + tieTolerance ? low - 1 : low;
+      }
+      const faceX = faceXAt(face);
+      return Object.freeze({ face, leftIndex: face - 1, rightIndex: face, faceX, offset: faceX - requestedX });
+    }));
+  }
+
+  function resolveStructureFace(cells, requestedX) {
+    return resolveStructureFaces(cells, [requestedX])[0];
+  }
+
+  function nearestFaceIndex(cells, x) {
+    try { return resolveStructureFace(cells, x).face; }
+    catch (_) { return -1; }
+  }
+
+  function buildFaceAwareProfilePath(xs, ys, resolvedFaces) {
+    if (!xs || !ys || typeof xs.length !== "number" || xs.length !== ys.length || xs.length < 1) throw new ValidationError("縦断パスの座標配列が不正です");
+    let previousX = -Infinity;
+    for (let index = 0; index < xs.length; index++) {
+      if (!Number.isFinite(xs[index]) || !Number.isFinite(ys[index]) || xs[index] <= previousX) throw new ValidationError("縦断パスは有限かつ単調増加である必要があります");
+      previousX = xs[index];
+    }
+    const faces = [], used = new Set();
+    for (const item of resolvedFaces || []) {
+      const face = Number(item && item.face);
+      if (!Number.isInteger(face) || face < 1 || face >= xs.length || used.has(face)) throw new ValidationError("縦断パスのダム計算面が不正または重複しています");
+      used.add(face);
+      faces.push({ face, faceX: 0.5 * (xs[face - 1] + xs[face]) });
+    }
+    faces.sort((a, b) => a.face - b.face);
+    const byFace = new Map(faces.map((item) => [item.face, item.faceX]));
+    const pathX = new Float64Array(xs.length + 2 * faces.length), pathY = new Float64Array(pathX.length);
+    let cursor = 0;
+    pathX[cursor] = xs[0]; pathY[cursor++] = ys[0];
+    for (let face = 1; face < xs.length; face++) {
+      const faceX = byFace.get(face);
+      if (faceX !== undefined) {
+        pathX[cursor] = faceX; pathY[cursor++] = ys[face - 1];
+        pathX[cursor] = faceX; pathY[cursor++] = ys[face];
+      }
+      pathX[cursor] = xs[face]; pathY[cursor++] = ys[face];
+    }
+    return Object.freeze({ x: pathX, y: pathY });
+  }
+
+  function controlVolumeBounds(xs) {
+    if (!xs || typeof xs.length !== "number" || xs.length < 2) throw new ValidationError("制御体積境界には2点以上の座標が必要です");
+    const bounds = new Float64Array(xs.length + 1);
+    for (let index = 0; index < xs.length; index++) {
+      if (!Number.isFinite(xs[index]) || (index && xs[index] <= xs[index - 1])) throw new ValidationError("制御体積の座標は有限かつ単調増加である必要があります");
+      if (index) bounds[index] = 0.5 * (xs[index - 1] + xs[index]);
+    }
+    bounds[0] = xs[0] - 0.5 * (xs[1] - xs[0]);
+    bounds[xs.length] = xs[xs.length - 1] + 0.5 * (xs[xs.length - 1] - xs[xs.length - 2]);
+    if (!bounds.every(Number.isFinite)) throw new ValidationError("制御体積境界が有限ではありません");
+    return bounds;
+  }
+
+  function comparisonSupport(domain, excludedRanges) {
+    if (!Array.isArray(domain) || domain.length !== 2 || !Number.isFinite(domain[0]) || !Number.isFinite(domain[1]) || domain[1] <= domain[0]) throw new ValidationError("比較領域が不正です");
+    const ranges = (excludedRanges || []).map((range) => {
+      if (!Array.isArray(range) || range.length !== 2 || !Number.isFinite(range[0]) || !Number.isFinite(range[1]) || range[1] < range[0]) throw new ValidationError("除外領域が不正です");
+      return [Math.max(domain[0], range[0]), Math.min(domain[1], range[1])];
+    }).filter((range) => range[1] > range[0]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const merged = [];
+    for (const range of ranges) {
+      const last = merged[merged.length - 1];
+      if (last && range[0] <= last[1]) last[1] = Math.max(last[1], range[1]);
+      else merged.push(range.slice());
+    }
+    const includedLength = (left, right) => {
+      let length = Math.max(0, right - left);
+      for (const range of merged) length -= Math.max(0, Math.min(right, range[1]) - Math.max(left, range[0]));
+      return Math.max(0, length);
+    };
+    return { includedLength };
+  }
+
+  function piecewiseConstantSupportStats(xs, values, domain, excludedRanges = []) {
+    if (!values || values.length !== xs.length) throw new ValidationError("区分一定統計の配列長が一致しません");
+    const bounds = controlVolumeBounds(xs), support = comparisonSupport(domain, excludedRanges);
+    let minimum = Infinity, maximum = -Infinity, maximumAbsolute = 0, measure = 0;
+    for (let index = 0; index < values.length; index++) {
+      if (!Number.isFinite(values[index])) throw new ValidationError("区分一定統計の値が有限ではありません");
+      const width = support.includedLength(Math.max(bounds[index], domain[0]), Math.min(bounds[index + 1], domain[1]));
+      if (width <= 0) continue;
+      minimum = Math.min(minimum, values[index]); maximum = Math.max(maximum, values[index]); maximumAbsolute = Math.max(maximumAbsolute, Math.abs(values[index])); measure += width;
+    }
+    if (!(measure > 0)) throw new ValidationError("区分一定統計の有効比較幅がありません");
+    return Object.freeze({ minimum, maximum, range: maximum - minimum, maximumAbsolute, measure });
+  }
+
+  function piecewiseConstantL1(xsA, valuesA, xsB, valuesB, domain, excludedRanges = []) {
+    if (!valuesA || !valuesB || valuesA.length !== xsA.length || valuesB.length !== xsB.length) throw new ValidationError("区分一定L1の配列長が一致しません");
+    const boundsA = controlVolumeBounds(xsA), boundsB = controlVolumeBounds(xsB);
+    for (const values of [valuesA, valuesB]) for (let index = 0; index < values.length; index++) if (!Number.isFinite(values[index])) throw new ValidationError("区分一定L1の値が有限ではありません");
+    const support = comparisonSupport(domain, excludedRanges);
+    let indexA = 0, indexB = 0, integral = 0, measure = 0;
+    while (indexA < valuesA.length && indexB < valuesB.length) {
+      const left = Math.max(boundsA[indexA], boundsB[indexB], domain[0]), right = Math.min(boundsA[indexA + 1], boundsB[indexB + 1], domain[1]);
+      const width = support.includedLength(left, right);
+      if (width > 0) { integral += width * Math.abs(valuesA[indexA] - valuesB[indexB]); measure += width; }
+      const endA = boundsA[indexA + 1], endB = boundsB[indexB + 1];
+      if (endA <= endB) indexA++;
+      if (endB <= endA) indexB++;
+    }
+    if (!(measure > 0) || !Number.isFinite(integral)) throw new ValidationError("区分一定L1の有効比較幅がありません");
+    return Object.freeze({ mean: integral / measure, integral, measure });
+  }
+
+  function resolveDamProfileGeometries(cells, bed, structures) {
+    if (!bed || bed.length !== cells.length || !Array.isArray(structures)) throw new ValidationError("ダム縦断形状の入力が不正です");
+    const faces = resolveStructureFaces(cells, structures.map((structure) => structure && structure.x));
+    return Object.freeze(structures.map((structure, index) => {
+      if (!structure || !Number.isFinite(structure.height) || structure.height < 0) throw new ValidationError("ダム縦断形状の入力が不正です");
+      const face = faces[index], leftBed = Number(bed[face.leftIndex]), rightBed = Number(bed[face.rightIndex]);
+      if (!Number.isFinite(leftBed) || !Number.isFinite(rightBed)) throw new ValidationError("ダム左右の河床標高が有限ではありません");
+      const base = Math.max(leftBed, rightBed), crest = base + structure.height;
+      if (!Number.isFinite(crest)) throw new ValidationError("ダム天端標高が有限ではありません");
+      return Object.freeze({ face: face.face, leftIndex: face.leftIndex, rightIndex: face.rightIndex, faceX: face.faceX, offset: face.offset, base, crest });
+    }));
+  }
+
+  function resolveDamProfileGeometry(cells, bed, structure) {
+    return resolveDamProfileGeometries(cells, bed, [structure])[0];
   }
 
   function chooseUnusedFaceX(cells, structures) {
     if (!Array.isArray(cells) || cells.length < 2) return null;
-    const used = new Set((structures || []).map((item) => nearestFaceIndex(cells, Number(item.x))).filter((face) => face >= 1));
+    let resolved = [];
+    try { resolved = resolveStructureFaces(cells, (structures || []).map((item) => Number(item.x))); } catch (_) { resolved = []; }
+    const used = new Set(resolved.map((item) => item.face));
     const midpoint = 0.5 * (cells[0].x + cells[cells.length - 1].x);
     const candidates = [];
     for (let face = 1; face < cells.length; face++) {
@@ -2784,15 +2993,17 @@ window.DFDS = (() => {
       for (const value of point.concentrations) { check(() => assertFinite(value, "流入濃度", 0, c.material.maxConcentration)); concentration += value; }
       if (concentration > c.material.maxConcentration + 1e-12) errors.push("流入濃度合計が上限を超えています");
     }
+    const resolvedStructureFaces = resolveStructureFaces(c.cells1d, c.structures.map((item) => item && item.x));
     const structureIds = new Set();
     const structureFaces = new Set();
-    for (const item of c.structures) {
+    for (let structureIndex = 0; structureIndex < c.structures.length; structureIndex++) {
+      const item = c.structures[structureIndex];
       if (!safeId.test(item.id) || structureIds.has(item.id)) errors.push("構造物IDが不正または重複しています: " + item.id);
       structureIds.add(item.id);
       if (!["impermeable", "slit", "grid"].includes(item.type)) errors.push("構造物種類が不正です");
       if (c.cells1d.length) check(() => assertFinite(item.x, "ダム位置", c.cells1d[0].x, c.cells1d[c.cells1d.length - 1].x));
       for (const [key, bounds] of Object.entries({ height: [0, 1000], dischargeCoefficient: [0, 5], slotWidth: [0, 100000], barSpacing: [0, 1000], blockageProbability: [0, 1], remobilizationShear: [0, 1e9], sedimentCapacity: [0, 1e12] })) check(() => assertFinite(item[key], "structure." + key, bounds[0], bounds[1]));
-      const face = nearestFaceIndex(c.cells1d, item.x);
+      const face = resolvedStructureFaces[structureIndex].face;
       if (structureFaces.has(face)) errors.push("複数の構造物が同じ計算面へ割り当てられています: face " + face);
       structureFaces.add(face);
     }
@@ -3043,7 +3254,7 @@ window.DFDS = (() => {
     return validateCase(c);
   }
 
-  function validateWorkerMessage(message, activeRequestId, expectedProfileLength, requestType = "") {
+  function validateWorkerMessage(message, activeRequestId, expectedProfileLength, requestType = "", expectedProfileX = null) {
     if (!message || typeof message !== "object" || Array.isArray(message)) throw new ValidationError("Worker応答がobjectではありません");
     if (message.protocolVersion !== PROTOCOL_VERSION) throw new ValidationError("Worker protocol versionが一致しません");
     if (typeof message.requestId !== "string" || !message.requestId) throw new ValidationError("Worker requestIdが不正です");
@@ -3075,6 +3286,11 @@ window.DFDS = (() => {
         if (!(buffer instanceof ArrayBuffer) || buffer.byteLength !== n * Float64Array.BYTES_PER_ELEMENT) throw new ValidationError("Worker buffer長が不正です: " + key);
         const values = new Float64Array(buffer);
         for (let index = 0; index < values.length; index++) if (!Number.isFinite(values[index])) throw new ValidationError("Worker bufferに非有限値があります: " + key + "[" + index + "]");
+      }
+      if (expectedProfileX) {
+        if (typeof expectedProfileX.length !== "number" || expectedProfileX.length !== n) throw new ValidationError("検証済みケースの1D座標長が不正です");
+        const receivedX = new Float64Array(message.buffers.x);
+        for (let index = 0; index < n; index++) if (!Number.isFinite(expectedProfileX[index]) || receivedX[index] !== expectedProfileX[index]) throw new ValidationError("Worker 1D座標が検証済みケースと一致しません: x[" + index + "]");
       }
       if (message.lengths.grid !== undefined) {
         const gridLength = message.lengths.grid, shape = message.gridShape;
@@ -3153,7 +3369,7 @@ window.DFDS = (() => {
       const request = message && this.requests.get(message.requestId);
       if (!request) return;
       try {
-        const status = validateWorkerMessage(message, message.requestId, request.expectedProfileLength, request.type);
+        const status = validateWorkerMessage(message, message.requestId, request.expectedProfileLength, request.type, request.expectedProfileX);
         if (status.stale) return;
         if (message.type === "frame" && request.onFrame) request.onFrame(message);
         else if (message.type === "progress" && request.onProgress) request.onProgress(message);
@@ -3198,7 +3414,7 @@ window.DFDS = (() => {
     PROTOCOL_VERSION, SCHEMA_VERSION, LIMITS, CSV_HEADER,
     ValidationError, Store, WorkerBridge,
     clone, deepFreeze, fnv1a, makeReferenceCase, estimateCaseBytes,
-    nearestFaceIndex, chooseUnusedFaceX, chooseUnusedCellX, withStructureTypeDefaults, resampleCells1D, applyUniformDeposit, insertInterpolatedInflowPoint,
+    resolveStructureFaces, resolveStructureFace, nearestFaceIndex, buildFaceAwareProfilePath, controlVolumeBounds, piecewiseConstantSupportStats, piecewiseConstantL1, resolveDamProfileGeometries, resolveDamProfileGeometry, chooseUnusedFaceX, chooseUnusedCellX, withStructureTypeDefaults, resampleCells1D, applyUniformDeposit, insertInterpolatedInflowPoint,
     normalizeCase, validateCase, parseCsv, serializeRows, serializeCaseCsv, parseCaseCsv,
     validateWorkerMessage, decodeGsiElevation, latLonToTile, buildGsiUrl, fetchGsiDem, GSI_DATASETS,
     ENSEMBLE_PARAMETERS, generateEnsembleSamples, applyEnsembleSample,
@@ -3392,6 +3608,7 @@ window.DFDS = (() => {
       let requestId = "", requestKey = "";
       requestId = worker.send("run", { caseData }, {
         expectedProfileLength: caseData.cells1d.length,
+        expectedProfileX: Float64Array.from(caseData.cells1d, (cell) => cell.x),
         onFrame: (message) => { const values = new Float64Array(message.buffers.discharge); for (const value of values) record.peakDischarge = Math.max(record.peakDischarge, Math.abs(value)); },
         onProgress: (message) => { if (Number.isFinite(message.progress)) { manager.progress.set(requestKey, message.progress); updateProgress(); } },
         onComplete: (message) => {
@@ -3521,6 +3738,7 @@ window.DFDS = (() => {
   }
 
   function renderDams(c) {
+    const resolvedFaces = D.resolveStructureFaces(c.cells1d, c.structures.map((dam) => dam.x));
     const rows = c.structures.flatMap((dam, index) => {
       const row = document.createElement("tr");
       const typeCell = document.createElement("td");
@@ -3545,6 +3763,9 @@ window.DFDS = (() => {
         makeNumericCell(dam.height, 0, 1000, 0.1, (value) => updateNested("dam", index, "height", value), dam.id + " 高さ m"), removeCell);
       const detailRow = document.createElement("tr"); detailRow.className = "dam-detail";
       const detailCell = document.createElement("td"); detailCell.colSpan = 4;
+      const resolvedFace = resolvedFaces[index], faceMeta = document.createElement("p"), offset = resolvedFace.offset;
+      faceMeta.className = "help dam-face-meta";
+      faceMeta.textContent = "入力 " + format(dam.x, 3) + " m / 計算面 " + format(resolvedFace.faceX, 3) + " m / 差 " + (offset >= 0 ? "+" : "") + format(offset, 3) + " m";
       const grid = document.createElement("div"); grid.className = "form-grid";
       const fields = [["dischargeCoefficient", "流量係数", 0, 5, 0.01], ["sedimentCapacity", "堆砂容量 m³", 0, 1e12, 10]];
       if (dam.type === "slit") fields.push(["slotWidth", "スリット幅 m", 0, 100000, 0.1]);
@@ -3556,7 +3777,7 @@ window.DFDS = (() => {
         input.addEventListener("change", () => updateNested("dam", index, key, Number(input.value)));
         field.append(caption, input); grid.append(field);
       }
-      detailCell.append(grid); detailRow.append(detailCell);
+      detailCell.append(faceMeta, grid); detailRow.append(detailCell);
       return [row, detailRow];
     });
     dom.damTableBody.replaceChildren(...rows);
@@ -3781,6 +4002,7 @@ window.DFDS = (() => {
     let requestId = "";
     requestId = bridge.send("run", { caseData: validated.caseData }, {
       expectedProfileLength: validated.caseData.cells1d.length,
+      expectedProfileX: Float64Array.from(validated.caseData.cells1d, (cell) => cell.x),
       onFrame: (message) => { if (runContextMatches(store.get(), requestId, runHash)) consumeFrame(message, runHash); },
       onProgress: (message) => {
         if (store.get().activeRunId !== requestId || store.get().activeRunHash !== runHash || !Number.isFinite(message.progress)) return;
@@ -3850,6 +4072,29 @@ window.DFDS = (() => {
       results.push(testResult("dam-type-defaults", "ダム種類切替の実効初期値", slitDefault.type === "slit" && slitDefault.slotWidth === 1 && gridDefault.type === "grid" && gridDefault.barSpacing === 0.5, "開口ゼロの他形式から切替時だけ既定値を設定", slitDefault.slotWidth + " m / " + gridDefault.barSpacing + " m"));
       const unusedFaceX = D.chooseUnusedFaceX(validated.caseData.cells1d, validated.caseData.structures), unusedFace = D.nearestFaceIndex(validated.caseData.cells1d, unusedFaceX), usedFaces = new Set(validated.caseData.structures.map((item) => D.nearestFaceIndex(validated.caseData.cells1d, item.x)));
       results.push(testResult("dam-unused-face", "追加ダムの未使用計算面選択", Number.isFinite(unusedFaceX) && !usedFaces.has(unusedFace), "領域中央に近い空き面を決定論的に選択", unusedFaceX + " m / face " + unusedFace));
+      const batchFaces = D.resolveStructureFaces(validated.caseData.cells1d, [100, 200]), face100 = batchFaces[0], face200 = batchFaces[1];
+      const nonuniformCells = [{ x: 0 }, { x: 4 }, { x: 10 }], tieFace = D.resolveStructureFace(nonuniformCells, 4.5), exactFace = D.resolveStructureFace(nonuniformCells, 7);
+      const decimalCells = [{ x: 0.1 }, { x: 0.2 }, { x: 0.4 }], decisionX = 0.15 + 0.5 * (0.3 - 0.15), decimalTieFace = D.resolveStructureFace(decimalCells, decisionX);
+      const fractionalCells = Array.from({ length: 31 }, (_, index) => ({ x: index * (40 / 30) })), ulpTieFace = D.resolveStructureFace(fractionalCells, 20);
+      const largeCoordinateCells = [{ x: 1e16 }, { x: 1e16 + 4 }, { x: 1e16 + 8 }], exactUpperLargeFace = D.resolveStructureFace(largeCoordinateCells, 1e16 + 6);
+      const tinyCoordinateCells = [{ x: 0 }, { x: 1e-16 }, { x: 2e-16 }], exactUpperTinyFace = D.resolveStructureFace(tinyCoordinateCells, 1.5e-16);
+      let invalidFaceRejected = false; try { D.resolveStructureFace([{ x: 0 }, { x: 0 }], 0); } catch (_) { invalidFaceRejected = true; }
+      let collapsedFaceRejected = false; try { D.resolveStructureFace([{ x: 1e16 }, { x: 1e16 + 2 }, { x: 1e16 + 4 }, { x: 1e16 + 6 }], 1e16 + 2); } catch (_) { collapsedFaceRejected = true; }
+      results.push(testResult("dam-face-resolution", "ダム入力位置から実効計算面を解決", Object.isFrozen(batchFaces) && face100.face === 10 && face100.faceX === 95 && face100.offset === -5 && face200.face === 20 && face200.faceX === 195 && tieFace.face === 1 && tieFace.faceX === 2 && exactFace.face === 2 && decimalTieFace.face === 1 && ulpTieFace.face === 15 && exactUpperLargeFace.face === 2 && exactUpperTinyFace.face === 2 && invalidFaceRejected && collapsedFaceRejected, "一括解決・通常/非一様/極大/微小座標・完全一致・局所距離ULP tie・表現不能面と無効入力の拒否", face100.faceX + " / " + face200.faceX + " m"));
+      const denseCells = Array.from({ length: D.LIMITS.maxCells1D }, (_, index) => ({ x: index })), denseRequests = Array.from({ length: 512 }, (_, index) => index * 19 + 0.5), denseFaces = D.resolveStructureFaces(denseCells, denseRequests);
+      results.push(testResult("dam-face-resolution-scale", "ダム計算面の一括二分探索", denseFaces.length === denseRequests.length && denseFaces.every((item, index) => item.face === index * 19 + 1), "最大1Dセル数を1回検証し512位置をO(D log N)で解決", denseFaces.length + "件"));
+      const pathXs = new Float64Array([0, 10, 20]), pathYs = new Float64Array([1, 2, 3]), originalPathYs = Array.from(pathYs);
+      const steppedPath = D.buildFaceAwareProfilePath(pathXs, pathYs, [{ face: 1 }]), plainPath = D.buildFaceAwareProfilePath(pathXs, pathYs, []), adjacentPath = D.buildFaceAwareProfilePath(pathXs, pathYs, [{ face: 1 }, { face: 2 }]);
+      const pathValid = JSON.stringify(Array.from(steppedPath.x)) === JSON.stringify([0, 5, 5, 10, 20]) && JSON.stringify(Array.from(steppedPath.y)) === JSON.stringify([1, 1, 2, 2, 3]) && JSON.stringify(Array.from(plainPath.x)) === JSON.stringify([0, 10, 20]) && JSON.stringify(Array.from(adjacentPath.x)) === JSON.stringify([0, 5, 5, 10, 15, 15, 20]) && JSON.stringify(Array.from(pathYs)) === JSON.stringify(originalPathYs);
+      results.push(testResult("dam-face-aware-path", "ダム面で左右セル値を段差化", pathValid, "0・1・隣接複数ダムでfaceXを二重化し入力配列を維持", Array.from(steppedPath.x).join(",")));
+      const geometryCells = [{ x: 0 }, { x: 10 }, { x: 20 }], profileGeometries = D.resolveDamProfileGeometries(geometryCells, new Float64Array([5, 7, 6]), [{ x: 5, height: 4 }, { x: 15, height: 0 }]);
+      const profileGeometry = profileGeometries[0], zeroGeometry = profileGeometries[1];
+      results.push(testResult("dam-profile-geometry", "ダム描画の基部・天端", profileGeometry.faceX === 5 && profileGeometry.base === 7 && profileGeometry.crest === 11 && zeroGeometry.base === 7 && zeroGeometry.crest === 7, "左右河床の高い側を基部として高さを加算・ゼロ高さも維持", profileGeometry.base + " / " + profileGeometry.crest + " m"));
+      const metricXsA = new Float64Array([0, 10]), metricValuesA = new Float64Array([1, 3]), metricXsB = new Float64Array([0, 5, 10]), metricValuesB = new Float64Array([1, 2, 3]);
+      const metricAll = D.piecewiseConstantL1(metricXsA, metricValuesA, metricXsB, metricValuesB, [0, 10]), metricExcluded = D.piecewiseConstantL1(metricXsA, metricValuesA, metricXsB, metricValuesB, [0, 10], [[2.5, 7.5]]);
+      const changedOnlyInsideExclusion = D.piecewiseConstantL1(metricXsA, metricValuesA, metricXsB, new Float64Array([1, 999, 3]), [0, 10], [[2.5, 7.5]]), shifted = D.piecewiseConstantL1(metricXsA, new Float64Array([101, 103]), metricXsB, new Float64Array([101, 102, 103]), [0, 10]);
+      const supportStats = D.piecewiseConstantSupportStats(metricXsB, new Float64Array([1, 999, 3]), [0, 10], [[2.5, 7.5]]), shiftedStats = D.piecewiseConstantSupportStats(metricXsB, new Float64Array([101, 999, 103]), [0, 10], [[2.5, 7.5]]);
+      results.push(testResult("grid-convergence-piecewise-l1", "セル平均の区分一定L1", metricAll.mean === 0.5 && metricAll.integral === 5 && metricAll.measure === 10 && metricExcluded.mean === 0 && metricExcluded.measure === 5 && changedOnlyInsideExclusion.mean === 0 && shifted.mean === metricAll.mean && supportStats.range === 2 && shiftedStats.range === 2, "control-volume重なり・固定除外幅・除外域不変・標高平行移動不変の同一支持領域統計", metricAll.mean));
       const duplicateFaceCase = D.clone(validated.caseData); duplicateFaceCase.structures.push(Object.assign({}, duplicateFaceCase.structures[0], { id: "dam-duplicate-face", x: duplicateFaceCase.structures[0].x - 0.01 }));
       let duplicateFaceRejected = false; try { D.validateCase(duplicateFaceCase); } catch (_) { duplicateFaceRejected = true; }
       results.push(testResult("dam-duplicate-face", "同一計算面の複数ダム拒否", duplicateFaceRejected, "後続構造物の暗黙無視を防止"));
@@ -3912,6 +4157,12 @@ window.DFDS = (() => {
         D.validateWorkerMessage({ protocolVersion: 1, requestId: "active", type: "frame", time: 0, steps: 0, diagnostics: { time: 0, steps: 0, waterError: 0, sedimentError: 0, minDepth: 0, maxConcentration: 0, maxCfl: 0 }, lengths: { profile: 3 }, buffers: { x: bad.buffer, bed: bad.buffer.slice(0), fixedBed: bad.buffer.slice(0), surface: bad.buffer.slice(0), discharge: bad.buffer.slice(0), concentration: bad.buffer.slice(0) } }, "active", 3);
       } catch (_) { invalidBufferRejected = true; }
       results.push(testResult("worker-buffer", "非有限Worker bufferの拒否", invalidBufferRejected, "転送配列を要素単位で検証"));
+      let mismatchedXRejected = false;
+      try {
+        const receivedX = new Float64Array([0, 11, 20]), values = new Float64Array([0, 0, 0]);
+        D.validateWorkerMessage({ protocolVersion: 1, requestId: "active", type: "frame", time: 0, steps: 0, diagnostics: { time: 0, steps: 0, waterError: 0, sedimentError: 0, minDepth: 0, maxConcentration: 0, maxCfl: 0 }, lengths: { profile: 3 }, buffers: { x: receivedX.buffer, bed: values.buffer.slice(0), fixedBed: values.buffer.slice(0), surface: values.buffer.slice(0), discharge: values.buffer.slice(0), concentration: values.buffer.slice(0) } }, "active", 3, "run", new Float64Array([0, 10, 20]));
+      } catch (_) { mismatchedXRejected = true; }
+      results.push(testResult("worker-profile-coordinate-boundary", "Worker縦断座標のケース整合", mismatchedXRejected, "検証済みケースと異なるframe.xを拒否し描画派生位置を保護"));
       let invalidCompleteRejected = false;
       try { D.validateWorkerMessage({ protocolVersion: 1, requestId: "active", type: "complete", summary: { time: "Infinity", steps: -1, frameCount: 0, waterError: -1, sedimentError: 0, minDepth: 0, maxConcentration: 0, maxCfl: 0 } }, "active", 0, "run"); } catch (_) { invalidCompleteRejected = true; }
       results.push(testResult("worker-complete", "Worker完了応答の検証", invalidCompleteRejected, "非有限・負値・欠落summaryを表示前に拒否"));
@@ -4123,16 +4374,19 @@ window.DFDS = (() => {
     const { context: ctx, width, height } = canvasContext(dom.profileCanvas); const frame = selectedFrame();
     if (!frame.x.length) { drawEmpty(ctx, width, height, "縦断データなし"); return; }
     ctx.clearRect(0, 0, width, height); const box = { left: 55, top: 22, width: Math.max(40, width - 76), height: Math.max(40, height - 68) };
-    const xRange = rangeOf([frame.x], 0); const yRange = rangeOf([frame.fixedBed, frame.bed, frame.surface]); drawAxes(ctx, box, xRange, yRange, "距離 x (m)", "標高 (m)");
-    plotLine(ctx, box, frame.x, frame.fixedBed, xRange, yRange, palette("--fixed"), [5, 4]);
-    plotLine(ctx, box, frame.x, frame.bed, xRange, yRange, palette("--bed"));
-    plotLine(ctx, box, frame.x, frame.surface, xRange, yRange, palette("--water"));
     const c = store.get().validated ? store.get().validated.caseData : store.get().rawCase;
-    for (const dam of c.structures) {
-      const index = Array.from(frame.x).reduce((best, value, i) => Math.abs(value - dam.x) < Math.abs(frame.x[best] - dam.x) ? i : best, 0);
-      const px = box.left + (dam.x - xRange[0]) / Math.max(1e-12, xRange[1] - xRange[0]) * box.width;
-      const y0 = box.top + (yRange[1] - frame.bed[index]) / Math.max(1e-12, yRange[1] - yRange[0]) * box.height;
-      const y1 = box.top + (yRange[1] - (frame.bed[index] + dam.height)) / Math.max(1e-12, yRange[1] - yRange[0]) * box.height;
+    const geometries = D.resolveDamProfileGeometries(c.cells1d, frame.bed, c.structures);
+    const resolvedDams = c.structures.map((dam, index) => ({ dam, geometry: geometries[index] }));
+    const damTops = resolvedDams.map(({ geometry }) => geometry.crest);
+    const xRange = rangeOf([frame.x], 0); const yRange = rangeOf([frame.fixedBed, frame.bed, frame.surface, damTops]); drawAxes(ctx, box, xRange, yRange, "距離 x (m)", "標高 (m)");
+    plotLine(ctx, box, frame.x, frame.fixedBed, xRange, yRange, palette("--fixed"), [5, 4]);
+    const faces = resolvedDams.map((item) => item.geometry), bedPath = D.buildFaceAwareProfilePath(frame.x, frame.bed, faces), surfacePath = D.buildFaceAwareProfilePath(frame.x, frame.surface, faces);
+    plotLine(ctx, box, bedPath.x, bedPath.y, xRange, yRange, palette("--bed"));
+    plotLine(ctx, box, surfacePath.x, surfacePath.y, xRange, yRange, palette("--water"));
+    for (const { dam, geometry } of resolvedDams) {
+      const px = box.left + (geometry.faceX - xRange[0]) / Math.max(1e-12, xRange[1] - xRange[0]) * box.width;
+      const y0 = box.top + (yRange[1] - geometry.base) / Math.max(1e-12, yRange[1] - yRange[0]) * box.height;
+      const y1 = box.top + (yRange[1] - geometry.crest) / Math.max(1e-12, yRange[1] - yRange[0]) * box.height;
       ctx.strokeStyle = palette("--warning"); ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(px, y0); ctx.lineTo(px, y1); ctx.stroke();
       ctx.fillStyle = palette("--warning"); ctx.textAlign = "center"; ctx.font = "10px " + getComputedStyle(document.body).fontFamily; ctx.fillText(dam.type === "grid" ? "格" : dam.type === "slit" ? "ス" : "不", px, Math.max(box.top + 10, y1 - 4));
     }
