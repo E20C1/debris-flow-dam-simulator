@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23172636'/%3E%3Cpath d='M10 45 27 18l9 14 6-9 12 22Z' fill='%233ec6a8'/%3E%3C/svg%3E">
   <meta name="color-scheme" content="dark">
   <meta name="description" content="保存則と再現可能性を重視した土石流・砂防ダム統合シミュレーター">
   <title>Debris Flow Dam Simulator</title>
@@ -151,6 +152,14 @@
     .mini-table th, .mini-table td { padding: 6px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
     .mini-table th { color: var(--muted); font-weight: 700; }
     .mini-table input, .mini-table select { min-height: 30px; padding: 4px 6px; }
+    .table-scroll { max-width: 100%; overflow: auto; border-top: 1px solid var(--line); }
+    .editor-table { min-width: 520px; }
+    .editor-table th, .editor-table td { white-space: nowrap; }
+    .editor-table th:first-child, .editor-table td:first-child { padding-left: 10px; }
+    .editor-table th:last-child, .editor-table td:last-child { padding-right: 10px; }
+    .inline-actions { display: flex; align-items: end; gap: 6px; }
+    .inline-actions > input { min-width: 0; }
+    .model-note { margin: 0; padding: 8px 10px; color: var(--faint); font-size: 10px; border-bottom: 1px solid var(--line); }
     .dam-detail td { padding: 7px 9px 11px; background: rgba(0,0,0,.12); }
     .dam-detail .form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .dam-detail .field label { font-size: 10px; }
@@ -266,7 +275,7 @@
         <button type="button" class="ghost" id="pauseButton" disabled>一時停止</button>
         <button type="button" class="danger" id="cancelButton" disabled>停止</button>
       </nav>
-      <input class="sr-only" id="csvFileInput" type="file" accept=".csv,text/csv" tabindex="-1" aria-hidden="true">
+      <input class="sr-only" id="csvFileInput" type="file" accept=".csv,text/csv" tabindex="-1" aria-hidden="true" aria-label="ケースCSVファイル">
     </header>
 
     <div class="workspace" id="workspace" data-mobile-view="view">
@@ -299,7 +308,7 @@
         </section>
 
         <section class="panel">
-          <header class="panel-header"><h2>材料・河道</h2><span class="meta" id="geometryMeta"></span></header>
+          <header class="panel-header"><h2>材料</h2><span class="meta" id="geometryMeta"></span></header>
           <div class="panel-body form-grid">
             <div class="field"><label for="manningInput">Manning粗度</label><input id="manningInput" type="number" min="0" max="1" step="0.001"></div>
             <div class="field"><label for="porosityInput">河床空隙率</label><input id="porosityInput" type="number" min="0.01" max="0.8" step="0.01"></div>
@@ -318,7 +327,28 @@
         </section>
 
         <section class="panel">
+          <header class="panel-header"><h2>河道・計算点</h2><span class="meta" id="geometryPointMeta"></span></header>
+          <div class="panel-body form-grid">
+            <div class="field full"><label for="geometryCountInput">計算点数</label><div class="inline-actions"><input id="geometryCountInput" type="number" min="2" max="10000" step="1"><button type="button" class="ghost" id="resampleGeometryButton">再標本化</button></div><p class="help">端点を保持して線形補間します。KANAko 1.44の目安は30～50点です。</p></div>
+            <div class="field full"><label for="geometryPointSelect">編集地点</label><select id="geometryPointSelect"></select></div>
+            <div class="field"><label for="geometryPointX">距離 x <span class="unit">m</span></label><input id="geometryPointX" type="number" readonly></div>
+            <div class="field"><label for="geometryFixedBedInput">固定床標高 <span class="unit">m</span></label><input id="geometryFixedBedInput" type="number" step="0.01"></div>
+            <div class="field"><label for="geometryBedInput">移動床標高 <span class="unit">m</span></label><input id="geometryBedInput" type="number" step="0.01"></div>
+            <div class="field"><label for="geometryWidthInput">川幅 <span class="unit">m</span></label><input id="geometryWidthInput" type="number" min="0.000001" max="100000" step="0.1"></div>
+            <div class="field full"><button type="button" class="ghost" id="applyGeometryPointButton">地点設定を適用</button></div>
+            <div class="field full"><label for="uniformDepositInput">堆積層厚を全区間へ適用 <span class="unit">m</span></label><div class="inline-actions"><input id="uniformDepositInput" type="number" min="0" max="1000" step="0.1" value="0"><button type="button" class="ghost" id="applyUniformDepositButton">一括適用</button></div><p class="help">全点を「移動床 = 固定床 + 層厚」にします。KANAkoの表示範囲は0～10 mです。</p></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <header class="panel-header"><h2>流入ハイドログラフ</h2><button type="button" class="compact ghost" id="addInflowButton">行を追加</button></header>
+          <p class="model-note">時刻・流量・粒径別濃度を汎用時系列として保持します。時刻は狭義単調増加、濃度合計は最大固相率以下です。</p>
+          <div class="table-scroll"><table class="mini-table editor-table"><thead id="inflowTableHead"></thead><tbody id="inflowTableBody"></tbody></table></div>
+        </section>
+
+        <section class="panel">
           <header class="panel-header"><h2>砂防ダム</h2><button type="button" class="compact ghost" id="addDamButton">追加</button></header>
+          <p class="model-note">格子型は確率閉塞付きの有効格子間隔モデルです。KANAkoの横桁本数・柱径・柱中心間隔とは直接換算しません。</p>
           <div class="panel-body flush"><table class="mini-table"><thead><tr><th>種類</th><th>位置 m</th><th>高さ m</th><th></th></tr></thead><tbody id="damTableBody"></tbody></table></div>
         </section>
 
@@ -556,7 +586,7 @@ function validateCase(c) {
   }
   if (Math.abs(fractionSum - 1) > 1e-12) throw new Error("粒径割合の合計が1ではありません");
   if (!Array.isArray(c.cells1d)) throw new Error("cells1dが配列ではありません");
-  integer(c.cells1d.length, "1Dセル数", 3, LIMITS.maxCells1D);
+  integer(c.cells1d.length, "1Dセル数", 2, LIMITS.maxCells1D);
   let previousX = -Infinity;
   const cellIds = new Set();
   for (const cell of c.cells1d) {
@@ -585,6 +615,7 @@ function validateCase(c) {
   }
   if (!Array.isArray(c.structures)) throw new Error("structuresが配列ではありません");
   const structureIds = new Set();
+  const structureFaces = new Set();
   for (const structure of c.structures) {
     if (!structure || typeof structure.id !== "string" || structureIds.has(structure.id)) throw new Error("構造物IDが不正または重複しています");
     structureIds.add(structure.id);
@@ -597,6 +628,13 @@ function validateCase(c) {
     range(structure.blockageProbability, "blockageProbability", 0, 1);
     range(structure.remobilizationShear, "remobilizationShear", 0, 1e9);
     range(structure.sedimentCapacity, "sedimentCapacity", 0, 1e12);
+    let nearestFace = 1, nearestDistance = Infinity;
+    for (let face = 1; face < c.cells1d.length; face++) {
+      const faceX = 0.5 * (c.cells1d[face - 1].x + c.cells1d[face].x), distance = Math.abs(faceX - structure.x);
+      if (distance < nearestDistance) { nearestDistance = distance; nearestFace = face; }
+    }
+    if (structureFaces.has(nearestFace)) throw new Error("複数の構造物が同じ計算面へ割り当てられています");
+    structureFaces.add(nearestFace);
   }
   if (!Array.isArray(c.observers)) throw new Error("observersが配列ではありません");
   for (const observer of c.observers) range(observer.x, "observer.x", c.cells1d[0].x, c.cells1d[c.cells1d.length - 1].x);
@@ -1973,9 +2011,13 @@ function runSelfTests() {
   } catch (error) { results.push(makeTestResult("prng", "Seed再現性", "fail", "例外", "完全一致", error.message)); }
   try {
     let rejected = false;
-    try { integer(LIMITS.maxCells1D + 1, "cells", 3, LIMITS.maxCells1D); } catch (_) { rejected = true; }
+    try { integer(LIMITS.maxCells1D + 1, "cells", 2, LIMITS.maxCells1D); } catch (_) { rejected = true; }
     results.push(makeTestResult("limit", "上限+1拒否", rejected ? "pass" : "fail", rejected ? "拒否" : "受理", "拒否", "1Dセル上限+1"));
   } catch (error) { results.push(makeTestResult("limit", "上限+1拒否", "fail", "例外", "拒否", error.message)); }
+  try {
+    const c = makeWorkerTestCase({ n: 2, duration: 0.01, maxDt: 0.001, depth: () => 0.4 }), result = runWorkerTestCase(c);
+    results.push(makeTestResult("two-cell-minimum", "2計算点の最小ケース", result.state.n === 2 && result.state.h.every(Number.isFinite) ? "pass" : "fail", result.state.n, "2", "UI下限とWorker数値実行を一致"));
+  } catch (error) { results.push(makeTestResult("two-cell-minimum", "2計算点の最小ケース", "fail", "例外", "2", error.message)); }
   try {
     const probes = [
       (c) => { c.solver.maxDt = NaN; },
@@ -1987,6 +2029,12 @@ function runSelfTests() {
     for (const mutate of probes) { const c = makeWorkerTestCase(); mutate(c); try { validateCase(c); } catch (_) { rejected++; } }
     results.push(makeTestResult("worker-input-boundary", "Worker入力の独立再検証", rejected === probes.length ? "pass" : "fail", rejected + "/" + probes.length, "全拒否", "NaN・負係数・未知手法・無限座標"));
   } catch (error) { results.push(makeTestResult("worker-input-boundary", "Worker入力の独立再検証", "fail", "例外", "全拒否", error.message)); }
+  try {
+    const base = { type: "impermeable", x: 20, height: 1, dischargeCoefficient: 0.58, slotWidth: 0, barSpacing: 0, blockageProbability: 0, remobilizationShear: 0, sedimentCapacity: 100 };
+    const c = makeWorkerTestCase({ structures: [Object.assign({ id: "duplicate-a" }, base), Object.assign({ id: "duplicate-b", x: 20.01 }, base)] });
+    let rejected = false; try { validateCase(c); } catch (_) { rejected = true; }
+    results.push(makeTestResult("worker-duplicate-face", "Worker同一計算面ダム拒否", rejected ? "pass" : "fail", rejected ? "拒否" : "受理", "拒否", "main検証を迂回しても後続ダムを暗黙無視しない"));
+  } catch (error) { results.push(makeTestResult("worker-duplicate-face", "Worker同一計算面ダム拒否", "fail", "例外", "拒否", error.message)); }
   try {
     const c = makeWorkerTestCase({ duration: 2000 });
     c.solver.outputInterval = 1; c.grid2d = Object.assign({}, c.grid2d, { enabled: true, nx: 512, ny: 512 });
@@ -2152,6 +2200,16 @@ function runSelfTests() {
     const error = Math.max(Math.abs(pass.flux[0] - flux[0]), Math.abs(limited.flux[0] - expected), Math.abs(blocked.flux[0]));
     results.push(makeTestResult("dam-limit-extremes", "ダム限流式・極端条件", error <= 1e-12 ? "pass" : "fail", error, "<=1e-12", "構造物なし=透過・堰公式一致・高天端=遮断"));
   } catch (error) { results.push(makeTestResult("dam-limit-extremes", "ダム限流式・極端条件", "fail", "例外", "<=1e-12", error.message)); }
+  try {
+    const c = makeWorkerTestCase({ duration: 0.01, n: 5 }), flux = [20, 25], sediment = [1.5, 0.9], left = { h: 1.4, u: 1.1, eta: 1.4, bed: 0, width: 4, concentrations: [0.12, 0.08] }, right = { h: 0.1, u: 0, eta: 0.1, bed: 0, width: 4, concentrations: [0, 0] };
+    const base = { id: "response", x: 2, height: 0.7, dischargeCoefficient: 0.58, slotWidth: 0.2, barSpacing: 0.05, blockageProbability: 0, remobilizationShear: 1e9, sedimentCapacity: 1e6, captured: new Float64Array(2), blockage: 0 };
+    const evaluate = (overrides) => limitByStructure(flux, sediment, Object.assign({}, base, overrides, { captured: new Float64Array(2), blockage: 0 }), left, right, c, 0.01, 4, () => 1);
+    const highCrest = evaluate({ type: "impermeable", height: 1.2 }), lowCrest = evaluate({ type: "impermeable", height: 0.2 });
+    const narrowSlit = evaluate({ type: "slit", slotWidth: 0.2 }), wideSlit = evaluate({ type: "slit", slotWidth: 2 });
+    const narrowGrid = evaluate({ type: "grid", barSpacing: 0.02 }), wideGrid = evaluate({ type: "grid", barSpacing: 1.5 });
+    const directed = lowCrest.flux[0] > highCrest.flux[0] && wideSlit.flux[0] > narrowSlit.flux[0] && wideGrid.flux[0] > narrowGrid.flux[0] && wideGrid.sedimentFlux[1] > narrowGrid.sedimentFlux[1];
+    results.push(makeTestResult("dam-parameter-response", "3形式ダムのパラメータ応答方向", directed ? "pass" : "fail", [highCrest.flux[0], lowCrest.flux[0], narrowSlit.flux[0], wideSlit.flux[0], narrowGrid.flux[0], wideGrid.flux[0]].map((value) => value.toFixed(4)).join(" / "), "低天端・広スリット・広格子で通過増", "水流量と粗粒径通過を直接比較"));
+  } catch (error) { results.push(makeTestResult("dam-parameter-response", "3形式ダムのパラメータ応答方向", "fail", "例外", "期待方向", error.message)); }
   try {
     const base = { height: 0.2, dischargeCoefficient: 0.58, slotWidth: 0.35, barSpacing: 0.06, blockageProbability: 0.04, remobilizationShear: 500, sedimentCapacity: 4 };
     const structures = [["impermeable", 10], ["slit", 20], ["grid", 30]].map(([type, x], index) => Object.assign({ id: "d" + index, type, x }, base));
@@ -2470,6 +2528,89 @@ window.DFDS = (() => {
     throw new ValidationError("指定地点に利用可能なGSI DEMがありません。grid_2d CSVを読み込んでください");
   }
 
+  function nearestFaceIndex(cells, x) {
+    if (!Array.isArray(cells) || cells.length < 2 || !Number.isFinite(x)) return -1;
+    let bestFace = 1, bestDistance = Infinity;
+    for (let face = 1; face < cells.length; face++) {
+      const faceX = 0.5 * (cells[face - 1].x + cells[face].x), distance = Math.abs(faceX - x);
+      if (distance < bestDistance) { bestDistance = distance; bestFace = face; }
+    }
+    return bestFace;
+  }
+
+  function chooseUnusedFaceX(cells, structures) {
+    if (!Array.isArray(cells) || cells.length < 2) return null;
+    const used = new Set((structures || []).map((item) => nearestFaceIndex(cells, Number(item.x))).filter((face) => face >= 1));
+    const midpoint = 0.5 * (cells[0].x + cells[cells.length - 1].x);
+    const candidates = [];
+    for (let face = 1; face < cells.length; face++) {
+      const x = 0.5 * (cells[face - 1].x + cells[face].x);
+      if (!used.has(face)) candidates.push({ face, x, distance: Math.abs(x - midpoint) });
+    }
+    candidates.sort((a, b) => a.distance - b.distance || a.x - b.x || a.face - b.face);
+    return candidates.length ? candidates[0].x : null;
+  }
+
+  function chooseUnusedCellX(cells, observers) {
+    if (!Array.isArray(cells) || !cells.length) return null;
+    const used = new Set();
+    for (const observer of observers || []) {
+      let best = 0;
+      for (let index = 1; index < cells.length; index++) if (Math.abs(cells[index].x - observer.x) < Math.abs(cells[best].x - observer.x)) best = index;
+      used.add(best);
+    }
+    const midpoint = 0.5 * (cells[0].x + cells[cells.length - 1].x);
+    const candidates = cells.map((cell, index) => ({ index, x: cell.x, distance: Math.abs(cell.x - midpoint) })).filter((item) => !used.has(item.index));
+    candidates.sort((a, b) => a.distance - b.distance || a.x - b.x || a.index - b.index);
+    return candidates.length ? candidates[0].x : null;
+  }
+
+  function withStructureTypeDefaults(structure, type) {
+    const next = Object.assign({}, structure, { type: String(type) });
+    if (next.type === "slit" && !(Number(next.slotWidth) > 0)) next.slotWidth = 1;
+    if (next.type === "grid" && !(Number(next.barSpacing) > 0)) next.barSpacing = 0.5;
+    return next;
+  }
+
+  function resampleCells1D(cells, count) {
+    if (!Array.isArray(cells) || cells.length < 2) throw new ValidationError("再標本化には2点以上の河道が必要です");
+    if (!Number.isInteger(count) || count < 2 || count > LIMITS.maxCells1D) throw new ValidationError("計算点数は2～" + LIMITS.maxCells1D.toLocaleString("ja-JP") + "です");
+    if (count === cells.length) return clone(cells);
+    const source = cells.slice().sort((a, b) => a.x - b.x), x0 = source[0].x, x1 = source[source.length - 1].x;
+    const interpolate = (x, key) => {
+      if (x <= x0) return source[0][key];
+      if (x >= x1) return source[source.length - 1][key];
+      let hi = 1; while (hi < source.length && source[hi].x < x) hi++;
+      const a = source[hi - 1], b = source[hi], ratio = (x - a.x) / (b.x - a.x);
+      return a[key] + ratio * (b[key] - a[key]);
+    };
+    return Array.from({ length: count }, (_, index) => {
+      const x = x0 + (x1 - x0) * index / (count - 1);
+      return { id: "c" + String(index).padStart(4, "0"), x, fixedBed: interpolate(x, "fixedBed"), bed: interpolate(x, "bed"), width: interpolate(x, "width"), initialDepth: interpolate(x, "initialDepth") };
+    });
+  }
+
+  function applyUniformDeposit(cells, thickness) {
+    if (!Number.isFinite(thickness) || thickness < 0 || thickness > 1000) throw new ValidationError("堆積層厚は0～1000 mです");
+    return cells.map((cell) => Object.assign({}, cell, { bed: cell.fixedBed + thickness }));
+  }
+
+  function insertInterpolatedInflowPoint(points) {
+    if (!Array.isArray(points) || points.length < 2) throw new ValidationError("流入点は2点以上必要です");
+    const source = points.slice().sort((a, b) => a.time - b.time);
+    let gapIndex = 0, gap = -Infinity;
+    for (let index = 0; index < source.length - 1; index++) {
+      const candidate = source[index + 1].time - source[index].time;
+      if (candidate > gap) { gap = candidate; gapIndex = index; }
+    }
+    if (!(gap > 0)) throw new ValidationError("流入時刻の間に追加可能な区間がありません");
+    const a = source[gapIndex], b = source[gapIndex + 1], time = 0.5 * (a.time + b.time), ratio = (time - a.time) / (b.time - a.time);
+    const used = new Set(source.map((point) => point.id)); let number = source.length + 1; while (used.has("q-ui-" + number)) number++;
+    const point = { id: "q-ui-" + number, time, discharge: a.discharge + ratio * (b.discharge - a.discharge), concentrations: a.concentrations.map((value, index) => value + ratio * (b.concentrations[index] - value)) };
+    source.splice(gapIndex + 1, 0, point);
+    return source;
+  }
+
   function makeReferenceCase() {
     const cells1d = [];
     for (let i = 0; i <= 30; i++) {
@@ -2617,7 +2758,7 @@ window.DFDS = (() => {
       grainFraction += grain.fraction;
     }
     if (Math.abs(grainFraction - 1) > 1e-12) errors.push("粒径割合の合計が1ではありません");
-    if (c.cells1d.length < 3 || c.cells1d.length > LIMITS.maxCells1D) errors.push("1Dセル数が範囲外です");
+    if (c.cells1d.length < 2 || c.cells1d.length > LIMITS.maxCells1D) errors.push("1Dセル数が範囲外です");
     const safeId = /^[A-Za-z0-9_-]{1,32}$/;
     const cellIds = new Set();
     let lastX = -Infinity;
@@ -2644,12 +2785,16 @@ window.DFDS = (() => {
       if (concentration > c.material.maxConcentration + 1e-12) errors.push("流入濃度合計が上限を超えています");
     }
     const structureIds = new Set();
+    const structureFaces = new Set();
     for (const item of c.structures) {
       if (!safeId.test(item.id) || structureIds.has(item.id)) errors.push("構造物IDが不正または重複しています: " + item.id);
       structureIds.add(item.id);
       if (!["impermeable", "slit", "grid"].includes(item.type)) errors.push("構造物種類が不正です");
       if (c.cells1d.length) check(() => assertFinite(item.x, "ダム位置", c.cells1d[0].x, c.cells1d[c.cells1d.length - 1].x));
       for (const [key, bounds] of Object.entries({ height: [0, 1000], dischargeCoefficient: [0, 5], slotWidth: [0, 100000], barSpacing: [0, 1000], blockageProbability: [0, 1], remobilizationShear: [0, 1e9], sedimentCapacity: [0, 1e12] })) check(() => assertFinite(item[key], "structure." + key, bounds[0], bounds[1]));
+      const face = nearestFaceIndex(c.cells1d, item.x);
+      if (structureFaces.has(face)) errors.push("複数の構造物が同じ計算面へ割り当てられています: face " + face);
+      structureFaces.add(face);
     }
     const observerIds = new Set();
     for (const observer of c.observers) {
@@ -2923,7 +3068,7 @@ window.DFDS = (() => {
     }
     if (message.type === "frame") {
       const n = message.lengths && message.lengths.profile;
-      if (!Number.isInteger(n) || n < 3 || n > LIMITS.maxCells1D || (expectedProfileLength && n !== expectedProfileLength)) throw new ValidationError("Worker profile長が不正です");
+      if (!Number.isInteger(n) || n < 2 || n > LIMITS.maxCells1D || (expectedProfileLength && n !== expectedProfileLength)) throw new ValidationError("Worker profile長が不正です");
       if (!message.buffers || typeof message.buffers !== "object") throw new ValidationError("Worker frame buffersがありません");
       for (const key of ["x", "bed", "fixedBed", "surface", "discharge", "concentration"]) {
         const buffer = message.buffers[key];
@@ -3053,6 +3198,7 @@ window.DFDS = (() => {
     PROTOCOL_VERSION, SCHEMA_VERSION, LIMITS, CSV_HEADER,
     ValidationError, Store, WorkerBridge,
     clone, deepFreeze, fnv1a, makeReferenceCase, estimateCaseBytes,
+    nearestFaceIndex, chooseUnusedFaceX, chooseUnusedCellX, withStructureTypeDefaults, resampleCells1D, applyUniformDeposit, insertInterpolatedInflowPoint,
     normalizeCase, validateCase, parseCsv, serializeRows, serializeCaseCsv, parseCaseCsv,
     validateWorkerMessage, decodeGsiElevation, latLonToTile, buildGsiUrl, fetchGsiDem, GSI_DATASETS,
     ENSEMBLE_PARAMETERS, generateEnsembleSamples, applyEnsembleSample,
@@ -3070,11 +3216,13 @@ window.DFDS = (() => {
   const bytes = (value) => value < 1024 * 1024 ? format(value / 1024, 1) + " KiB" : format(value / (1024 * 1024), 1) + " MiB";
   const dom = Object.fromEntries([
     "runState", "caseHash", "caseName", "modelMode", "experimentalNotice", "durationInput", "outputIntervalInput", "cflInput", "seedInput", "computeEstimate",
-    "manningInput", "porosityInput", "fluidDensityInput", "solidDensityInput", "maxConcentrationInput", "internalFrictionInput", "erosionCoefficientInput", "depositionCoefficientInput", "yieldVelocityInput", "yieldCoefficientInput", "activeLayerInput", "geometryMeta", "grainTableBody", "damTableBody", "observerTableBody", "observationSelect", "progressBar",
+    "manningInput", "porosityInput", "fluidDensityInput", "solidDensityInput", "maxConcentrationInput", "internalFrictionInput", "erosionCoefficientInput", "depositionCoefficientInput", "yieldVelocityInput", "yieldCoefficientInput", "activeLayerInput", "geometryMeta", "grainTableBody",
+    "geometryPointMeta", "geometryCountInput", "resampleGeometryButton", "geometryPointSelect", "geometryPointX", "geometryFixedBedInput", "geometryBedInput", "geometryWidthInput", "applyGeometryPointButton", "uniformDepositInput", "applyUniformDepositButton", "addInflowButton", "inflowTableHead", "inflowTableBody",
+    "damTableBody", "observerTableBody", "observationSelect", "progressBar",
     "profileCanvas", "terrainCanvas", "hydrographCanvas", "massCanvas", "validationList", "timelineRange", "timelineCurrent", "timelineEnd",
     "metricTime", "metricSteps", "metricWaterError", "metricSedimentError", "metricMinDepth", "metricCfl", "diagnosticCount", "diagnosticSummary",
     "statusLog", "reproHash", "reproFrames", "workerState", "workspace", "csvFileInput", "importDialog", "importFileMeta", "importSummary",
-    "importDiagnostics", "importApplyButton", "resetButton", "runButton", "pauseButton", "cancelButton", "resultExportButton", "resultExportDialog", "resultExportCloseButton", "terrainSourceMeta", "gsiLatInput", "gsiLonInput", "fetchGsiButton", "gsiStatus",
+    "importDiagnostics", "importApplyButton", "importButton", "exportButton", "validateButton", "resetButton", "runButton", "pauseButton", "cancelButton", "resultExportButton", "resultExportDialog", "resultExportCloseButton", "terrainSourceMeta", "gsiLatInput", "gsiLonInput", "fetchGsiButton", "gsiStatus",
     "uncertaintyMethod", "ensembleCases", "ensembleEstimate", "ensembleRunButton", "ensembleCancelButton", "ensembleExportButton", "ensembleStatus", "ensembleCanvas",
   ].map((id) => [id, byId(id)]));
 
@@ -3088,17 +3236,42 @@ window.DFDS = (() => {
   });
   const store = new D.Store({
     phase: "idle", rawCase: D.makeReferenceCase(), validated: null, frames: [], selectedFrame: 0,
-    activeRunId: null, paused: false, tests: [], importCandidate: null, view: "profile", logs: [], progress: 0, ensembleResults: [], ensembleRunning: false,
+    activeRunId: null, activeRunHash: null, paused: false, tests: [], importCandidate: null, view: "profile", logs: [], progress: 0, ensembleResults: [], ensembleRunning: false,
   });
   let bridge = null;
   let ensembleManager = null;
   let terrainFetchActive = false;
+  let importReadActive = false;
   let resizeFrame = 0;
   const MAX_ENSEMBLE_WORKERS = 4;
+  const CASE_EDIT_IDS = Object.freeze([
+    "caseName", "modelMode", "durationInput", "outputIntervalInput", "cflInput", "seedInput", "manningInput", "porosityInput", "fluidDensityInput", "solidDensityInput", "maxConcentrationInput", "internalFrictionInput", "erosionCoefficientInput", "depositionCoefficientInput", "yieldVelocityInput", "yieldCoefficientInput", "activeLayerInput",
+    "geometryCountInput", "resampleGeometryButton", "geometryPointSelect", "geometryFixedBedInput", "geometryBedInput", "geometryWidthInput", "applyGeometryPointButton", "uniformDepositInput", "applyUniformDepositButton", "addInflowButton", "addDamButton", "addObserverButton",
+    "gsiLatInput", "gsiLonInput", "fetchGsiButton", "uncertaintyMethod", "ensembleCases", "ensembleRunButton", "importButton", "exportButton", "validateButton", "csvFileInput",
+  ]);
+
+  function isCaseEditingBusy() {
+    const state = store.get();
+    return terrainFetchActive || importReadActive || state.ensembleRunning || ["validating", "running", "paused", "cancelling"].includes(state.phase);
+  }
+
+  function updateCaseEditAvailability() {
+    const busy = isCaseEditingBusy();
+    document.querySelectorAll("[data-case-edit]").forEach((control) => { control.disabled = busy || control.dataset.lockDisabled === "true"; });
+    dom.runButton.disabled = busy;
+    updateResetAvailability();
+  }
+
+  function guardCaseEdit(action = "ケース設定") {
+    if (!isCaseEditingBusy()) return true;
+    addLog("処理中は" + action + "を変更できません", "warning");
+    syncForm(store.get().rawCase);
+    return false;
+  }
 
   function updateResetAvailability() {
     const state = store.get();
-    dom.resetButton.disabled = terrainFetchActive || state.ensembleRunning || !["idle", "error"].includes(state.phase);
+    dom.resetButton.disabled = terrainFetchActive || importReadActive || state.ensembleRunning || !["idle", "error"].includes(state.phase);
   }
 
   function transition(next, label) {
@@ -3107,12 +3280,12 @@ window.DFDS = (() => {
     store.set({ phase: next });
     dom.runState.dataset.state = next === "cancelling" ? "paused" : next;
     text(dom.runState, label || ({ idle: "準備完了", validating: "検証中", running: "計算中", paused: "一時停止", cancelling: "停止処理中", error: "エラー" }[next]));
-    const busy = ["running", "paused", "cancelling"].includes(next);
+    const busy = ["validating", "running", "paused", "cancelling"].includes(next);
     dom.runButton.disabled = busy;
     dom.pauseButton.disabled = !["running", "paused"].includes(next);
     dom.pauseButton.textContent = next === "paused" ? "再開" : "一時停止";
     dom.cancelButton.disabled = !["running", "paused"].includes(next);
-    updateResetAvailability();
+    updateCaseEditAvailability();
   }
 
   function addLog(message, level = "info") {
@@ -3189,7 +3362,7 @@ window.DFDS = (() => {
     results.sort((a, b) => a.index - b.index);
     store.set({ ensembleResults: results, ensembleRunning: false });
     dom.ensembleRunButton.disabled = false; dom.ensembleCancelButton.disabled = true; dom.ensembleExportButton.disabled = results.length === 0;
-    updateResetAvailability();
+    updateCaseEditAvailability();
     const completed = results.filter((item) => item.status === "complete").length, failed = results.filter((item) => item.status === "failed").length, interrupted = results.filter((item) => item.status === "cancelled" || item.status === "not-run").length;
     dom.ensembleStatus.textContent = (cancelled ? "停止: " : "完了: ") + completed + "/" + samples.length + " 成功、" + failed + " 失敗、" + interrupted + " 中断/未実行";
     drawEnsembleResults(); addLog("ensemble " + (cancelled ? "停止" : "完了") + ": " + completed + "/" + samples.length, failed ? "warning" : "success");
@@ -3236,12 +3409,12 @@ window.DFDS = (() => {
   }
 
   function startEnsemble() {
-    if (store.get().ensembleRunning || store.get().activeRunId) { addLog("別の計算が実行中です", "warning"); return; }
+    if (isCaseEditingBusy() || store.get().activeRunId) { addLog("別の処理が実行中です", "warning"); return; }
     const validated = validateInputs(true); if (!validated) return;
     const method = dom.uncertaintyMethod.value, cases = Number(dom.ensembleCases.value), seed = Number(dom.seedInput.value);
     if (method === "none") { addLog("感度分析手法を選択してください", "warning"); return; }
     let samples; try { samples = D.generateEnsembleSamples(validated.caseData, method, cases, seed); } catch (error) { addLog(error.message || String(error), "error"); return; }
-    store.set({ ensembleResults: [], ensembleRunning: true }); dom.ensembleRunButton.disabled = true; dom.ensembleCancelButton.disabled = false; dom.ensembleExportButton.disabled = true; updateResetAvailability(); drawEnsembleResults();
+    store.set({ ensembleResults: [], ensembleRunning: true }); dom.ensembleRunButton.disabled = true; dom.ensembleCancelButton.disabled = false; dom.ensembleExportButton.disabled = true; updateCaseEditAvailability(); drawEnsembleResults();
     addLog(method + " ensembleを開始: " + cases + " case / Seed " + seed); executeEnsemble(validated, samples);
   }
 
@@ -3281,8 +3454,11 @@ window.DFDS = (() => {
     const terrainProvenance = c.provenance.find((item) => item.id === "gsi-dem" || item.id === "generated-grid");
     text(dom.terrainSourceMeta, terrainProvenance ? (terrainProvenance.id === "gsi-dem" ? "GSI DEM" : "ローカル生成") : "CSV / 既定");
     renderGrains(c);
+    renderGeometry(c);
+    renderInflow(c);
     renderDams(c);
     renderObservers(c);
+    updateCaseEditAvailability();
   }
 
   function makeNumericCell(value, min, max, step, onChange, accessibleName) {
@@ -3292,11 +3468,42 @@ window.DFDS = (() => {
     input.min = String(min);
     input.max = String(max);
     input.step = String(step);
+    input.dataset.caseEdit = "";
     if (accessibleName) input.setAttribute("aria-label", accessibleName);
     input.addEventListener("change", () => onChange(Number(input.value)));
     const cell = document.createElement("td");
     cell.append(input);
     return cell;
+  }
+
+  function renderGeometry(c) {
+    const previous = Number(dom.geometryPointSelect.value);
+    inputNumber("geometryCountInput", c.cells1d.length);
+    const options = c.cells1d.map((cell, index) => {
+      const option = document.createElement("option"); option.value = String(index); option.textContent = (index + 1) + " — x=" + format(cell.x, 3) + " m"; return option;
+    });
+    dom.geometryPointSelect.replaceChildren(...options);
+    dom.geometryPointSelect.value = Number.isInteger(previous) && previous >= 0 && previous < c.cells1d.length ? String(previous) : "0";
+    const index = Number(dom.geometryPointSelect.value) || 0, cell = c.cells1d[index];
+    inputNumber("geometryPointX", cell.x); inputNumber("geometryFixedBedInput", cell.fixedBed); inputNumber("geometryBedInput", cell.bed); inputNumber("geometryWidthInput", cell.width);
+    text(dom.geometryPointMeta, c.cells1d.length + "点 / " + format(c.cells1d[0].x, 1) + "–" + format(c.cells1d[c.cells1d.length - 1].x, 1) + " m");
+  }
+
+  function renderInflow(c) {
+    const header = document.createElement("tr");
+    for (const label of ["時刻 s", "流量 m³/s", ...c.grains.map((grain) => grain.id + " 濃度"), ""]) { const th = document.createElement("th"); th.textContent = label; header.append(th); }
+    dom.inflowTableHead.replaceChildren(header);
+    const rows = c.inflow.map((point, index) => {
+      const row = document.createElement("tr");
+      row.append(makeNumericCell(point.time, 0, c.solver.duration, 1, (value) => updateNested("inflow", index, "time", value), point.id + " 時刻 s"));
+      row.append(makeNumericCell(point.discharge, 0, 1e9, 0.1, (value) => updateNested("inflow", index, "discharge", value), point.id + " 流量 m3/s"));
+      point.concentrations.forEach((value, grainIndex) => row.append(makeNumericCell(value, 0, c.material.maxConcentration, 0.01, (nextValue) => updateInflowConcentration(index, grainIndex, nextValue), point.id + " " + c.grains[grainIndex].id + " 濃度")));
+      const removeCell = document.createElement("td"), remove = document.createElement("button");
+      remove.type = "button"; remove.className = "compact ghost"; remove.textContent = "削除"; remove.setAttribute("aria-label", point.id + "を削除"); remove.dataset.caseEdit = ""; remove.dataset.lockDisabled = String(c.inflow.length <= 2);
+      remove.addEventListener("click", () => { const next = D.clone(store.get().rawCase); if (next.inflow.length <= 2) { addLog("流入ハイドログラフは2点以上必要です", "warning"); return; } next.inflow.splice(index, 1); applyEditedCase(next, "流入点を削除しました"); });
+      removeCell.append(remove); row.append(removeCell); return row;
+    });
+    dom.inflowTableBody.replaceChildren(...rows);
   }
 
   function renderGrains(c) {
@@ -3322,11 +3529,13 @@ window.DFDS = (() => {
         const option = document.createElement("option"); option.value = value; option.textContent = label; option.selected = dam.type === value; select.append(option);
       }
       select.setAttribute("aria-label", dam.id + " 種類");
-      select.addEventListener("change", () => updateNested("dam", index, "type", select.value));
+      select.dataset.caseEdit = "";
+      select.addEventListener("change", () => changeDamType(index, select.value));
       typeCell.append(select);
       const removeCell = document.createElement("td");
       const remove = document.createElement("button");
       remove.type = "button"; remove.className = "compact ghost"; remove.textContent = "削除"; remove.setAttribute("aria-label", dam.id + "を削除");
+      remove.dataset.caseEdit = "";
       remove.addEventListener("click", () => {
         const next = D.clone(store.get().rawCase); next.structures.splice(index, 1); applyEditedCase(next, "砂防ダムを削除しました");
       });
@@ -3337,13 +3546,13 @@ window.DFDS = (() => {
       const detailRow = document.createElement("tr"); detailRow.className = "dam-detail";
       const detailCell = document.createElement("td"); detailCell.colSpan = 4;
       const grid = document.createElement("div"); grid.className = "form-grid";
-      for (const [key, label, min, max, step] of [
-        ["dischargeCoefficient", "流量係数", 0, 5, 0.01], ["slotWidth", "スリット幅 m", 0, 100000, 0.1], ["barSpacing", "格子間隔 m", 0, 1000, 0.01],
-        ["blockageProbability", "閉塞確率 1/s", 0, 1, 0.0001], ["remobilizationShear", "再移動せん断 Pa", 0, 1e9, 10], ["sedimentCapacity", "堆砂容量 m³", 0, 1e12, 10],
-      ]) {
+      const fields = [["dischargeCoefficient", "流量係数", 0, 5, 0.01], ["sedimentCapacity", "堆砂容量 m³", 0, 1e12, 10]];
+      if (dam.type === "slit") fields.push(["slotWidth", "スリット幅 m", 0, 100000, 0.1]);
+      if (dam.type === "grid") fields.push(["barSpacing", "有効格子間隔 m", 0, 1000, 0.01], ["blockageProbability", "閉塞確率 1/s", 0, 1, 0.0001], ["remobilizationShear", "再移動せん断 Pa", 0, 1e9, 10]);
+      for (const [key, label, min, max, step] of fields) {
         const field = document.createElement("div"); field.className = "field";
         const caption = document.createElement("label"); caption.textContent = label;
-        const input = document.createElement("input"); input.type = "number"; input.min = String(min); input.max = String(max); input.step = String(step); input.value = String(dam[key]); input.setAttribute("aria-label", dam.id + " " + label);
+        const input = document.createElement("input"); input.type = "number"; input.min = String(min); input.max = String(max); input.step = String(step); input.value = String(dam[key]); input.setAttribute("aria-label", dam.id + " " + label); input.dataset.caseEdit = "";
         input.addEventListener("change", () => updateNested("dam", index, key, Number(input.value)));
         field.append(caption, input); grid.append(field);
       }
@@ -3363,8 +3572,8 @@ window.DFDS = (() => {
     if (options.some((option) => option.value === selected)) dom.observationSelect.value = selected;
     const rows = c.observers.map((observer, index) => {
       const row = document.createElement("tr"), nameCell = document.createElement("td"), positionCell = makeNumericCell(observer.x, c.cells1d[0].x, c.cells1d[c.cells1d.length - 1].x, 1, (value) => updateNested("observer", index, "x", value), observer.id + " 位置 m"), removeCell = document.createElement("td");
-      const name = document.createElement("input"); name.value = observer.name; name.maxLength = 120; name.setAttribute("aria-label", observer.id + " 名称"); name.addEventListener("change", () => updateNested("observer", index, "name", name.value)); nameCell.append(name);
-      const remove = document.createElement("button"); remove.type = "button"; remove.className = "compact ghost"; remove.textContent = "削除"; remove.setAttribute("aria-label", observer.id + "を削除"); remove.addEventListener("click", () => { const next = D.clone(store.get().rawCase); next.observers.splice(index, 1); applyEditedCase(next, "観測点を削除しました"); }); removeCell.append(remove);
+      const name = document.createElement("input"); name.value = observer.name; name.maxLength = 120; name.setAttribute("aria-label", observer.id + " 名称"); name.dataset.caseEdit = ""; name.addEventListener("change", () => updateNested("observer", index, "name", name.value)); nameCell.append(name);
+      const remove = document.createElement("button"); remove.type = "button"; remove.className = "compact ghost"; remove.textContent = "削除"; remove.setAttribute("aria-label", observer.id + "を削除"); remove.dataset.caseEdit = ""; remove.addEventListener("click", () => { const next = D.clone(store.get().rawCase); next.observers.splice(index, 1); applyEditedCase(next, "観測点を削除しました"); }); removeCell.append(remove);
       row.append(nameCell, positionCell, removeCell); return row;
     });
     dom.observerTableBody.replaceChildren(...rows);
@@ -3372,8 +3581,51 @@ window.DFDS = (() => {
 
   function updateNested(kind, index, key, value) {
     const next = D.clone(store.get().rawCase);
-    (kind === "grain" ? next.grains : kind === "dam" ? next.structures : next.observers)[index][key] = value;
+    (kind === "grain" ? next.grains : kind === "dam" ? next.structures : kind === "observer" ? next.observers : next.inflow)[index][key] = value;
     applyEditedCase(next);
+  }
+
+  function updateInflowConcentration(index, grainIndex, value) {
+    const next = D.clone(store.get().rawCase); next.inflow[index].concentrations[grainIndex] = value; applyEditedCase(next);
+  }
+
+  function changeDamType(index, type) {
+    const next = D.clone(store.get().rawCase); next.structures[index] = D.withStructureTypeDefaults(next.structures[index], type); applyEditedCase(next, "ダム種類を" + ({ impermeable: "不透過", slit: "スリット", grid: "格子" }[type] || type) + "へ変更しました");
+  }
+
+  function applyValidatedGeometry(next, message) {
+    try { D.validateCase(next); return applyEditedCase(next, message); }
+    catch (error) { addLog("河道設定を適用しませんでした: " + (error.message || String(error)), "error"); syncForm(store.get().rawCase); return false; }
+  }
+
+  function resampleGeometry() {
+    if (!guardCaseEdit("計算点数")) return;
+    const next = collectForm(), count = Number(dom.geometryCountInput.value);
+    try { next.cells1d = D.resampleCells1D(next.cells1d, count); applyValidatedGeometry(next, "河道を" + count + "点へ再標本化しました"); }
+    catch (error) { addLog(error.message || String(error), "error"); syncForm(store.get().rawCase); }
+  }
+
+  function applyGeometryPoint() {
+    if (!guardCaseEdit("地点設定")) return;
+    const index = Number(dom.geometryPointSelect.value), fixedBed = Number(dom.geometryFixedBedInput.value), bed = Number(dom.geometryBedInput.value), width = Number(dom.geometryWidthInput.value);
+    if (!Number.isInteger(index) || index < 0 || index >= store.get().rawCase.cells1d.length || !Number.isFinite(fixedBed) || !Number.isFinite(bed) || !Number.isFinite(width) || bed < fixedBed || !(width > 0)) {
+      addLog("地点設定を適用しませんでした: 移動床は固定床以上、川幅は正の有限数にしてください", "error"); syncForm(store.get().rawCase); return;
+    }
+    const next = collectForm(); next.cells1d[index] = Object.assign({}, next.cells1d[index], { fixedBed, bed, width }); applyValidatedGeometry(next, "地点 x=" + format(next.cells1d[index].x, 3) + " mを更新しました");
+  }
+
+  function applyUniformDepositFromForm() {
+    if (!guardCaseEdit("堆積層厚")) return;
+    const next = collectForm();
+    try { next.cells1d = D.applyUniformDeposit(next.cells1d, Number(dom.uniformDepositInput.value)); applyValidatedGeometry(next, "堆積層厚を全区間へ適用しました"); }
+    catch (error) { addLog(error.message || String(error), "error"); syncForm(store.get().rawCase); }
+  }
+
+  function addInflowPoint() {
+    if (!guardCaseEdit("流入ハイドログラフ")) return;
+    const next = collectForm();
+    try { next.inflow = D.insertInterpolatedInflowPoint(next.inflow); applyEditedCase(next, "最大時間間隔へ流入点を線形補間で追加しました"); }
+    catch (error) { addLog(error.message || String(error), "error"); }
   }
 
   function collectForm() {
@@ -3410,6 +3662,7 @@ window.DFDS = (() => {
   }
 
   function applyEditedCase(next, logMessage) {
+    if (!guardCaseEdit("ケース設定")) return false;
     store.set({ rawCase: next, validated: null, frames: [], selectedFrame: 0 });
     dom.resultExportButton.disabled = true;
     dom.caseHash.textContent = "未検証";
@@ -3419,17 +3672,18 @@ window.DFDS = (() => {
     syncForm(next);
     renderAll();
     validateInputs(false);
+    return true;
   }
 
   function resetApplication() {
     const state = store.get();
-    if (terrainFetchActive || state.ensembleRunning || !["idle", "error"].includes(state.phase)) {
+    if (terrainFetchActive || importReadActive || state.ensembleRunning || !["idle", "error"].includes(state.phase)) {
       addLog("処理中はリセットできません", "warning");
       return;
     }
     const reference = D.makeReferenceCase();
     store.set({
-      rawCase: reference, validated: null, frames: [], selectedFrame: 0, activeRunId: null, paused: false,
+      rawCase: reference, validated: null, frames: [], selectedFrame: 0, activeRunId: null, activeRunHash: null, paused: false,
       tests: [], importCandidate: null, view: "profile", logs: [], progress: 0, ensembleResults: [], ensembleRunning: false,
     });
     if (dom.importDialog.open) closeImport(); else dom.csvFileInput.value = "";
@@ -3490,7 +3744,13 @@ window.DFDS = (() => {
     return { time: 0, steps: 0, x, bed, fixedBed, surface, discharge: new Float64Array(x.length), concentration: new Float64Array(x.length), diagnostics: { time: 0, steps: 0, waterError: 0, sedimentError: 0, minDepth: Math.min(...c.cells1d.map((cell) => cell.initialDepth)), maxConcentration: 0, maxCfl: 0 } };
   }
 
-  function consumeFrame(message) {
+  function runContextMatches(state, requestId, runHash) {
+    return state.activeRunId === requestId && state.activeRunHash === runHash && Boolean(state.validated && state.validated.hash === runHash);
+  }
+
+  function consumeFrame(message, runHash) {
+    const current = store.get();
+    if (!runContextMatches(current, current.activeRunId, runHash)) return;
     const frame = {
       time: message.time, steps: message.steps, diagnostics: D.clone(message.diagnostics),
       x: new Float64Array(message.buffers.x), bed: new Float64Array(message.buffers.bed), fixedBed: new Float64Array(message.buffers.fixedBed),
@@ -3510,30 +3770,31 @@ window.DFDS = (() => {
   }
 
   function startRun() {
-    if (store.get().ensembleRunning) { addLog("ensemble実行中は単一計算を開始できません", "warning"); return; }
+    if (isCaseEditingBusy() || store.get().activeRunId) { addLog("別の処理中は単一計算を開始できません", "warning"); return; }
     const validated = validateInputs(true);
     if (!validated) { transition("error", "入力エラー"); return; }
     if (!bridge) { transition("error", "Worker利用不可"); return; }
     if (validated.caseData.solver.model === "advanced") addLog("実験的五方程式モデルを開始します。USGS D-Claw互換ではありません。", "warning");
-    store.set({ frames: [], selectedFrame: 0, progress: 0, paused: false }); dom.resultExportButton.disabled = true;
+    const runHash = validated.hash;
+    store.set({ frames: [], selectedFrame: 0, progress: 0, paused: false, activeRunHash: runHash }); dom.resultExportButton.disabled = true;
     transition("running", "計算中 0%");
     let requestId = "";
     requestId = bridge.send("run", { caseData: validated.caseData }, {
       expectedProfileLength: validated.caseData.cells1d.length,
-      onFrame: (message) => { if (store.get().activeRunId === requestId) consumeFrame(message); },
+      onFrame: (message) => { if (runContextMatches(store.get(), requestId, runHash)) consumeFrame(message, runHash); },
       onProgress: (message) => {
-        if (store.get().activeRunId !== requestId || !Number.isFinite(message.progress)) return;
+        if (store.get().activeRunId !== requestId || store.get().activeRunHash !== runHash || !Number.isFinite(message.progress)) return;
         const progress = Math.max(0, Math.min(1, message.progress));
         store.set({ progress }); dom.progressBar.style.width = (progress * 100).toFixed(2) + "%"; transition("running", "計算中 " + Math.round(progress * 100) + "%");
       },
       onComplete: (message) => {
-        if (store.get().activeRunId !== requestId) return;
-        store.set({ activeRunId: null, progress: 1 }); dom.progressBar.style.width = "100%"; transition("idle", "計算完了");
+        if (store.get().activeRunId !== requestId || store.get().activeRunHash !== runHash) return;
+        store.set({ activeRunId: null, activeRunHash: null, progress: 1 }); dom.progressBar.style.width = "100%"; transition("idle", "計算完了");
         addLog("計算完了: " + message.summary.steps.toLocaleString("ja-JP") + " step / " + store.get().frames.length + " frames", "success");
       },
       onError: (error, meta) => {
-        if (store.get().activeRunId !== requestId) return;
-        store.set({ activeRunId: null });
+        if (store.get().activeRunId !== requestId || store.get().activeRunHash !== runHash) return;
+        store.set({ activeRunId: null, activeRunHash: null });
         if (meta && meta.code === "CANCELLED") { transition("idle", "停止しました"); addLog("計算を停止しました", "warning"); }
         else { transition("error", "計算エラー"); addLog(error.message || String(error), "error"); }
       },
@@ -3573,6 +3834,7 @@ window.DFDS = (() => {
   }
 
   function runSelfTests() {
+    if (isCaseEditingBusy()) { addLog("別の処理中は自己検証を開始できません", "warning"); return; }
     transition("validating", "自己検証中");
     const results = [];
     let validated;
@@ -3583,6 +3845,25 @@ window.DFDS = (() => {
       results.push(testResult("csv-roundtrip", "ケースCSV round-trip", imported.hash === validated.hash, "export→import後の正規化ハッシュ", imported.hash, validated.hash));
       const kanakoBasis = validated.caseData.provenance.some((item) => item.id === "reference" && /KANAko/.test(item.value));
       results.push(testResult("kanako-comparison-record", "KANAko比較記録", kanakoBasis, "公開既定条件を参考にするがcanonical出力時系列がないため差分はN/A。positivity-preserving HLL有限体積・分級・急縮損失のモデル差を結果合わせしない", "N/A（物理検証合格には不使用）"));
+      const zeroOpening = Object.assign({}, validated.caseData.structures[1], { slotWidth: 0, barSpacing: 0 });
+      const slitDefault = D.withStructureTypeDefaults(zeroOpening, "slit"), gridDefault = D.withStructureTypeDefaults(zeroOpening, "grid");
+      results.push(testResult("dam-type-defaults", "ダム種類切替の実効初期値", slitDefault.type === "slit" && slitDefault.slotWidth === 1 && gridDefault.type === "grid" && gridDefault.barSpacing === 0.5, "開口ゼロの他形式から切替時だけ既定値を設定", slitDefault.slotWidth + " m / " + gridDefault.barSpacing + " m"));
+      const unusedFaceX = D.chooseUnusedFaceX(validated.caseData.cells1d, validated.caseData.structures), unusedFace = D.nearestFaceIndex(validated.caseData.cells1d, unusedFaceX), usedFaces = new Set(validated.caseData.structures.map((item) => D.nearestFaceIndex(validated.caseData.cells1d, item.x)));
+      results.push(testResult("dam-unused-face", "追加ダムの未使用計算面選択", Number.isFinite(unusedFaceX) && !usedFaces.has(unusedFace), "領域中央に近い空き面を決定論的に選択", unusedFaceX + " m / face " + unusedFace));
+      const duplicateFaceCase = D.clone(validated.caseData); duplicateFaceCase.structures.push(Object.assign({}, duplicateFaceCase.structures[0], { id: "dam-duplicate-face", x: duplicateFaceCase.structures[0].x - 0.01 }));
+      let duplicateFaceRejected = false; try { D.validateCase(duplicateFaceCase); } catch (_) { duplicateFaceRejected = true; }
+      results.push(testResult("dam-duplicate-face", "同一計算面の複数ダム拒否", duplicateFaceRejected, "後続構造物の暗黙無視を防止"));
+      const unusedObserverX = D.chooseUnusedCellX(validated.caseData.cells1d, validated.caseData.observers), observerPositions = new Set(validated.caseData.observers.map((item) => item.x));
+      results.push(testResult("observer-unused-cell", "追加観測点の未使用計算点選択", Number.isFinite(unusedObserverX) && !observerPositions.has(unusedObserverX), "中央に近い未使用点", unusedObserverX + " m"));
+      const resampled = D.resampleCells1D(validated.caseData.cells1d, 61), midpoint = resampled[30];
+      results.push(testResult("geometry-resample", "河道の線形再標本化", resampled.length === 61 && resampled[0].x === validated.caseData.cells1d[0].x && resampled[60].x === validated.caseData.cells1d[30].x && Math.abs(midpoint.x - 150) < 1e-12, "端点・物理範囲を保持", resampled.length + "点"));
+      const uniform = D.applyUniformDeposit(resampled, 2.5);
+      results.push(testResult("geometry-uniform-deposit", "堆積層厚の全区間適用", uniform.every((cell) => Math.abs(cell.bed - cell.fixedBed - 2.5) < 1e-12), "bed = fixedBed + thickness", "2.5 m"));
+      const insertedInflow = D.insertInterpolatedInflowPoint(validated.caseData.inflow), insertedValid = insertedInflow.length === validated.caseData.inflow.length + 1 && insertedInflow.every((point, index) => index === 0 || point.time > insertedInflow[index - 1].time);
+      const editedRoundTripCase = D.clone(validated.caseData); editedRoundTripCase.cells1d = resampled; editedRoundTripCase.inflow = insertedInflow; const editedValidated = D.validateCase(editedRoundTripCase), editedImported = D.parseCaseCsv(D.serializeCaseCsv(editedValidated.caseData));
+      results.push(testResult("inflow-edit-roundtrip", "流入編集・河道編集CSV round-trip", insertedValid && editedImported.hash === editedValidated.hash, "線形補間行・61点河道をCSV往復", editedImported.hash, editedValidated.hash));
+      const runGuardProbe = { activeRunId: "run-1", activeRunHash: "aaaa", validated: { hash: "aaaa" } };
+      results.push(testResult("run-context-lock", "計算request・case hash整合", runContextMatches(runGuardProbe, "run-1", "aaaa") && !runContextMatches(runGuardProbe, "run-1", "bbbb") && !runContextMatches(Object.assign({}, runGuardProbe, { activeRunId: "run-2" }), "run-1", "aaaa"), "requestIdと検証済みhashの両方を照合"));
       const gridCase = D.makeReferenceCase();
       gridCase.solver.model = "coupled1d2d";
       gridCase.grid2d = { enabled: true, nx: 3, ny: 2, dx: 2.5, dy: 4, originX: 100, originY: -8, elevation: [12.1, 12.0, 11.8, 11.9, 11.7, 11.4] };
@@ -3693,6 +3974,7 @@ window.DFDS = (() => {
   }
 
   function exportCase() {
+    if (isCaseEditingBusy()) { addLog("処理中はケースCSVを保存できません", "warning"); return; }
     const validated = validateInputs(true); if (!validated) return;
     const blob = new Blob([D.serializeCaseCsv(validated.caseData)], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob); const link = document.createElement("a");
@@ -3747,20 +4029,24 @@ window.DFDS = (() => {
   function closeResultExport() { if (typeof dom.resultExportDialog.close === "function") dom.resultExportDialog.close(); else dom.resultExportDialog.removeAttribute("open"); }
 
   async function fetchGsiTerrain() {
-    const previous = dom.fetchGsiButton.disabled; terrainFetchActive = true; dom.fetchGsiButton.disabled = true; updateResetAvailability(); dom.gsiStatus.textContent = "固定allowlistからDEMを検証取得中…";
+    if (isCaseEditingBusy()) { addLog("別の処理中はDEMを取得できません", "warning"); return; }
+    terrainFetchActive = true; updateCaseEditAvailability(); dom.gsiStatus.textContent = "固定allowlistからDEMを検証取得中…";
     try {
       const result = await D.fetchGsiDem(Number(dom.gsiLatInput.value), Number(dom.gsiLonInput.value));
       const next = D.clone(store.get().rawCase); next.grid2d = result.grid;
       next.provenance = next.provenance.filter((item) => !["gsi-dem", "generated-grid"].includes(item.id)).concat(result.provenance);
+      terrainFetchActive = false; updateCaseEditAvailability();
       applyEditedCase(next, result.dataset + "を適用しました（欠測 " + result.missing + " pixels）");
       dom.gsiStatus.textContent = result.dataset + " / 256×256 / 欠測率 " + format(result.missingRatio * 100, 3) + "%";
       byId("gsiAttribution").classList.remove("hidden"); setView("terrain");
     } catch (error) {
       dom.gsiStatus.textContent = "取得失敗。現在の地形を保持しました: " + (error.message || String(error)); addLog(dom.gsiStatus.textContent, "error");
-    } finally { terrainFetchActive = false; dom.fetchGsiButton.disabled = previous; updateResetAvailability(); }
+    } finally { terrainFetchActive = false; updateCaseEditAvailability(); }
   }
 
   async function importFile(file) {
+    if (isCaseEditingBusy()) { addLog("別の処理中はCSVを読み込めません", "warning"); dom.csvFileInput.value = ""; return; }
+    importReadActive = true; updateCaseEditAvailability();
     dom.importApplyButton.disabled = true; store.set({ importCandidate: null }); dom.importDiagnostics.replaceChildren();
     dom.importFileMeta.textContent = file.name + " / " + bytes(file.size); dom.importSummary.className = "notice"; dom.importSummary.textContent = "検証中です。現在のケースはまだ変更されません。";
     if (typeof dom.importDialog.showModal === "function") dom.importDialog.showModal(); else dom.importDialog.setAttribute("open", "");
@@ -3775,10 +4061,11 @@ window.DFDS = (() => {
       const details = error instanceof D.ValidationError && Array.isArray(error.diagnostics) ? error.diagnostics : [];
       renderTestResults(details.slice(0, 20).map((item, index) => testResult("import-" + index, "入力エラー", false, item.message || String(item))), dom.importDiagnostics);
       addLog("CSVを適用しませんでした: " + (error.message || String(error)), "error");
-    }
+    } finally { importReadActive = false; updateCaseEditAvailability(); }
   }
 
   function applyImported() {
+    if (!guardCaseEdit("CSVケース")) return;
     const candidate = store.get().importCandidate; if (!candidate) return;
     store.set({ rawCase: D.clone(candidate.caseData), validated: candidate, frames: [], selectedFrame: 0, importCandidate: null });
     dom.resultExportButton.disabled = true; syncForm(candidate.caseData); validateInputs(false); closeImport(); renderAll(); addLog("検証済みCSVケースを適用しました: " + candidate.hash, "success");
@@ -3860,6 +4147,30 @@ window.DFDS = (() => {
     ctx.fillStyle = palette("--text"); ctx.textAlign = "left"; ctx.font = "bold 11px " + getComputedStyle(document.body).fontFamily; ctx.fillText(title, box.left, 14);
   }
 
+  function drawHydrograph() {
+    const { context: ctx, width, height } = canvasContext(dom.hydrographCanvas), state = store.get(), c = state.validated ? state.validated.caseData : state.rawCase;
+    const inflow = c.inflow.filter((point) => Number.isFinite(point.time) && Number.isFinite(point.discharge));
+    const inflowX = Float64Array.from(inflow, (point) => point.time), inflowY = Float64Array.from(inflow, (point) => point.discharge);
+    const observer = c.observers.find((item) => item.id === dom.observationSelect.value), observerFrames = state.frames.filter((frame) => Number.isFinite(frame.time) && frame.x.length && frame.discharge.length);
+    const observerX = Float64Array.from(observerFrames, (frame) => frame.time);
+    const observerY = Float64Array.from(observerFrames, (frame) => {
+      const target = observer ? observer.x : frame.x[frame.x.length - 1]; let index = 0;
+      for (let i = 1; i < frame.x.length; i++) if (Math.abs(frame.x[i] - target) < Math.abs(frame.x[index] - target)) index = i;
+      return frame.discharge[index];
+    });
+    if (!inflowX.length && !observerX.length) { drawEmpty(ctx, width, height, "流入データなし"); return; }
+    ctx.clearRect(0, 0, width, height);
+    const box = { left: 52, top: 28, width: Math.max(40, width - 68), height: Math.max(35, height - 64) };
+    const duration = Number.isFinite(c.solver.duration) && c.solver.duration > 0 ? c.solver.duration : 1;
+    const xRange = [0, Math.max(duration, ...inflowX, ...observerX, 1)], yRange = rangeOf([[0], inflowY, observerY]);
+    drawAxes(ctx, box, xRange, yRange, "時刻 (s)", "流量 (m³/s)");
+    if (inflowX.length) plotLine(ctx, box, inflowX, inflowY, xRange, yRange, palette("--sediment"), [5, 3]);
+    if (observerX.length) plotLine(ctx, box, observerX, observerY, xRange, yRange, palette("--water"));
+    ctx.font = "bold 10px " + getComputedStyle(document.body).fontFamily; ctx.textAlign = "left";
+    ctx.fillStyle = palette("--sediment"); ctx.fillText("流入", box.left, 15);
+    if (observerX.length) { ctx.fillStyle = palette("--water"); ctx.fillText(observer ? observer.name : "下流端", box.left + 38, 15); }
+  }
+
   class TerrainWebGLRenderer {
     constructor() {
       this.canvas = document.createElement("canvas");
@@ -3911,9 +4222,7 @@ window.DFDS = (() => {
 
   function renderAll() {
     const frame = selectedFrame(); drawProfile(); drawTerrain();
-    const observer = store.get().rawCase.observers.find((item) => item.id === dom.observationSelect.value);
-    const observerIndex = observer && frame ? frame.x.reduce((best, value, index) => Math.abs(value - observer.x) < Math.abs(frame.x[best] - observer.x) ? index : best, 0) : -1;
-    drawSeries(dom.hydrographCanvas, observer ? observer.name + " 流量" : "下流端流量", (item) => item.discharge[observerIndex >= 0 ? observerIndex : item.discharge.length - 1], palette("--water"));
+    drawHydrograph();
     drawSeries(dom.massCanvas, "最大保存誤差", (item) => Math.max(item.diagnostics.waterError, item.diagnostics.sedimentError), palette("--sediment"), true);
     renderMetrics(frame); drawEnsembleResults();
   }
@@ -3924,16 +4233,20 @@ window.DFDS = (() => {
       byId(id).addEventListener("change", () => { applyEditedCase(collectForm()); updateEnsembleEstimate(); });
     }
     byId("addDamButton").addEventListener("click", () => {
+      if (!guardCaseEdit("砂防ダム")) return;
       const next = collectForm(); const used = new Set(next.structures.map((item) => item.id)); let number = next.structures.length + 1; while (used.has("dam-" + number)) number++;
-      const x0 = next.cells1d[0].x, x1 = next.cells1d[next.cells1d.length - 1].x;
-      next.structures.push({ id: "dam-" + number, type: "impermeable", x: x0 + (x1 - x0) * 0.5, height: 5, dischargeCoefficient: 0.58, slotWidth: 1, barSpacing: 0.5, blockageProbability: 0, remobilizationShear: 0, sedimentCapacity: 50000 });
+      const x = D.chooseUnusedFaceX(next.cells1d, next.structures); if (x === null) { addLog("使用可能な計算面がないため砂防ダムを追加できません", "warning"); return; }
+      next.structures.push({ id: "dam-" + number, type: "impermeable", x, height: 5, dischargeCoefficient: 0.58, slotWidth: 1, barSpacing: 0.5, blockageProbability: 0, remobilizationShear: 0, sedimentCapacity: 50000 });
       applyEditedCase(next, "砂防ダムを追加しました");
     });
     byId("addObserverButton").addEventListener("click", () => {
+      if (!guardCaseEdit("観測点")) return;
       const next = collectForm(), used = new Set(next.observers.map((item) => item.id)); let number = next.observers.length + 1; while (used.has("obs" + number)) number++;
-      const x0 = next.cells1d[0].x, x1 = next.cells1d[next.cells1d.length - 1].x;
-      next.observers.push({ id: "obs" + number, name: number + "番観測点", x: x0 + (x1 - x0) * 0.5 }); applyEditedCase(next, "観測点を追加しました");
+      const x = D.chooseUnusedCellX(next.cells1d, next.observers); if (x === null) { addLog("未使用の計算点がないため観測点を追加できません", "warning"); return; }
+      next.observers.push({ id: "obs" + number, name: number + "番観測点", x }); applyEditedCase(next, "観測点を追加しました");
     });
+    dom.geometryPointSelect.addEventListener("change", () => renderGeometry(store.get().rawCase));
+    dom.resampleGeometryButton.addEventListener("click", resampleGeometry); dom.applyGeometryPointButton.addEventListener("click", applyGeometryPoint); dom.applyUniformDepositButton.addEventListener("click", applyUniformDepositFromForm); dom.addInflowButton.addEventListener("click", addInflowPoint);
     dom.observationSelect.addEventListener("change", renderAll);
     byId("validateButton").addEventListener("click", runSelfTests); dom.resetButton.addEventListener("click", resetApplication); byId("runButton").addEventListener("click", startRun); byId("pauseButton").addEventListener("click", togglePause); byId("cancelButton").addEventListener("click", cancelRun);
     dom.ensembleRunButton.addEventListener("click", startEnsemble); dom.ensembleCancelButton.addEventListener("click", cancelEnsemble); dom.ensembleExportButton.addEventListener("click", exportEnsemble);
@@ -3954,7 +4267,7 @@ window.DFDS = (() => {
   }
 
   function boot() {
-    document.documentElement.dataset.js = "enabled"; bindEvents(); syncForm(store.get().rawCase); validateInputs(false); renderAll(); updateEnsembleEstimate(); drawEnsembleResults();
+    document.documentElement.dataset.js = "enabled"; CASE_EDIT_IDS.forEach((id) => { const control = byId(id); if (control) control.dataset.caseEdit = ""; }); bindEvents(); syncForm(store.get().rawCase); validateInputs(false); renderAll(); updateEnsembleEstimate(); drawEnsembleResults();
     try {
       bridge = new D.WorkerBridge(byId("solver-worker-source").textContent); dom.workerState.textContent = "生成中";
       bridge.send("init", {}, { onReady: () => { dom.workerState.textContent = "ready / protocol 1"; addLog("Worker protocol 1 を初期化しました", "success"); }, onError: (error) => { dom.workerState.textContent = "error"; addLog(error.message, "error"); } });
