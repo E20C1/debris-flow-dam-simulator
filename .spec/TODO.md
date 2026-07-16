@@ -48,4 +48,4 @@
 - [x] MEMORYをアーカイブして最新基線を記録する。
 - [x] HANDOFFを完了証拠付きで更新する。
 - [x] HTTPサーバー、Playwright、不要な補助プロセスを停止する。
-- [ ] commit、`origin/main` push、clean、`main == origin/main`を確認する。
+- [x] commit、`origin/main` push、clean、`main == origin/main`を確認する。
